@@ -5,7 +5,22 @@ __pycache__/
 *.log
 venv/
 .env
+# Flutter build / platform folders
+product_app/android/
+product_app/ios/
+product_app/macos/
+product_app/linux/
+product_app/windows/
+product_app/web/
 
+# Flutter generated
+.dart_tool/
+build/
+pubspec.lock
+
+# Python cache
+__pycache__/
+*.pyc
 # Flutter / Dart
 .dart_tool/
 build/
