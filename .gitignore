@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.log
+venv/
+.env
+
+# Flutter / Dart
+.dart_tool/
+build/
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large data files (optional)
+*.csv
+*.json
