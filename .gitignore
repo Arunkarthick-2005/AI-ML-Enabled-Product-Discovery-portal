@@ -12,7 +12,7 @@ product_app/macos/
 product_app/linux/
 product_app/windows/
 product_app/web/
-
+Backend/all-MiniLM-L6-v2
 # Flutter generated
 .dart_tool/
 build/

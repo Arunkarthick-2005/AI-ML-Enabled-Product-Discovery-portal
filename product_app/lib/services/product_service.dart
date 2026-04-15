@@ -19,16 +19,44 @@ class ProductService {
   }
 
   /// ✅ Search products (USED by search bar)
-  static Future<List<Product>> searchProducts(String query) async {
-    final response = await http.get(
-      Uri.parse("$baseUrl/products/search?q=${Uri.encodeComponent(query)}"),
-    );
+static Future<List<Product>> searchProducts({
+  required String query,
+  String? category,
+  String? brand ,
+  int? priceMin ,
+  int? priceMax,
+}) async {
+  // Build query parameters
+  final Map<String, String> params = {
+    'q': query,
+  };
 
-    if (response.statusCode == 200) {
-      final List data = jsonDecode(response.body);
-      return data.map((e) => Product.fromJson(e)).toList();
-    } else {
-      throw Exception("Search failed");
-    }
+  if (category != null && category.isNotEmpty) {
+    params['category'] = category;
   }
+
+  if (brand != null && brand.isNotEmpty) {
+    params['brand'] = brand;
+  }
+
+  if (priceMin != null) {
+    params['price_min'] = priceMin.toString();
+  }
+
+  if (priceMax != null) {
+    params['price_max'] = priceMax.toString();
+  }
+
+  final uri = Uri.parse("$baseUrl/products/search")
+      .replace(queryParameters: params);
+
+  final response = await http.get(uri);
+
+  if (response.statusCode == 200) {
+    final List data = jsonDecode(response.body);
+    return data.map((e) => Product.fromJson(e)).toList();
+  } else {
+    throw Exception("Search failed");
+  }
+}
 }

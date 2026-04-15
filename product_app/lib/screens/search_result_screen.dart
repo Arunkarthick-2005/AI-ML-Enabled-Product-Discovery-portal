@@ -13,7 +13,7 @@ class SearchResultScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text('Results for "$query"')),
       body: FutureBuilder<List<Product>>(
-        future: ProductService.searchProducts(query),
+        future: ProductService.searchProducts(query: query),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());

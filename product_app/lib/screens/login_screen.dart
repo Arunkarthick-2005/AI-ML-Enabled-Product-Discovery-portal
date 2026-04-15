@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/auth_text_field.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
-import 'register_screen.dart';
+import 'package:product_app/screens/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,68 +16,132 @@ class _LoginScreenState extends State<LoginScreen> {
   final passwordController = TextEditingController();
   bool loading = false;
 
+  static const double fieldWidth = 320;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Center(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              const SizedBox(height: 40),
+
               const Text(
-                "Login",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                "Welcome to the Product Discovery Portal",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 8),
+              Text("Login to continue",
+                  style: TextStyle(color: Colors.grey[600])),
 
-              AuthTextField(label: "Email", controller: emailController),
-              AuthTextField(
-                  label: "Password",
-                  controller: passwordController,
-                  isPassword: true),
+              const SizedBox(height: 32),
 
-              const SizedBox(height: 16),
+              Center(
+                child: Card(
+                  elevation: 6,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          width: fieldWidth,
+                          child: AuthTextField(
+                            label: "Email",
+                            controller: emailController,
+                            prefixIcon: Icons.email_outlined,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: fieldWidth,
+                          child: AuthTextField(
+                            label: "Password",
+                            controller: passwordController,
+                            isPassword: true,
+                            prefixIcon: Icons.lock_outline,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
 
-              ElevatedButton(
-                onPressed: loading
-                    ? null
-                    : () async {
-                        setState(() => loading = true);
+                        SizedBox(
+                          width: fieldWidth,
+                          height: 44,
+                          child: ElevatedButton(
+                            onPressed: loading
+                                ? null
+                                : () async {
+                                    setState(() => loading = true);
 
-                        final token = await AuthService.login(
-                          emailController.text,
-                          passwordController.text,
-                        );
+                                    final result =
+                                        await AuthService.login(
+                                      emailController.text.trim(),
+                                      passwordController.text.trim(),
+                                    );
 
-                        setState(() => loading = false);
+                                    setState(() => loading = false);
 
-                        if (token != null) {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const HomeScreen()),
-                          );
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text("Invalid credentials")),
-                          );
-                        }
-                      },
-                child:
-                    loading ? const CircularProgressIndicator() : const Text("Login"),
+                                    if (result != null) {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => HomeScreen(
+                                            username: result.username,
+                                          ),
+                                        ),
+                                      );
+                                    } else {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content:
+                                              Text("Invalid credentials"),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            child: loading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text("Login"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
 
-              TextButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const RegisterScreen()),
-                  );
-                },
-                child: const Text("Create an account"),
+              const SizedBox(height: 24),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text("Don’t have an account?",
+                      style: TextStyle(color: Colors.grey[700])),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const RegisterScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text("Create one"),
+                  ),
+                ],
               ),
             ],
           ),

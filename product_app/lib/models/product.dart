@@ -5,7 +5,7 @@ class Product {
   final Map<String, dynamic> price;
   final Map<String, dynamic> category;
   final String description;
-  final List<dynamic> images;
+  final List<String> images;         // ✅ FIXED
   final dynamic specifications;
 
   Product({
@@ -21,13 +21,15 @@ class Product {
 
   factory Product.fromJson(Map<String, dynamic> json) {
     return Product(
-      pid: json['pid'],
-      title: json['title'],
-      brand: json['brand'] ?? "",
-      price: json['price'] ?? {},
-      category: json['category'] ?? {},
-      description: json['description'] ?? "",
-      images: json['images'] ?? [],
+      pid: json['pid'] ?? '',
+      title: json['title'] ?? '',
+      brand: json['brand'] ?? '',
+      price: Map<String, dynamic>.from(json['price'] ?? {}),
+      category: Map<String, dynamic>.from(json['category'] ?? {}),
+      description: json['description'] ?? '',
+      images: json['images'] != null
+          ? List<String>.from(json['images'])
+          : [],                           // ✅ FIXED
       specifications: json['specifications'],
     );
   }
