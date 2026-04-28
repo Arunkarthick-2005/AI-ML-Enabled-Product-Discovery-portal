@@ -45,7 +45,8 @@ class Product(BaseModel):
     brand: Optional[str]
     category: Dict[str, Optional[str]]
     price: Dict[str, Optional[int]]
-    rating: Dict[str, Optional[float]]
+    rating: Optional[Dict] = None
     description: Optional[str]
     specifications: Optional[Any]
     images: List[str]
+

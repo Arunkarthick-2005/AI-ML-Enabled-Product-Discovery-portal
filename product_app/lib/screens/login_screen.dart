@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/auth_text_field.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
+import '../utils/user_session.dart';
 import 'package:product_app/screens/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -21,131 +22,168 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              const SizedBox(height: 40),
+      // ✅ Yellow background for full screen
+      backgroundColor: Colors.yellow.shade100,
 
-              const Text(
-                "Welcome to the Product Discovery Portal",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
               ),
-              const SizedBox(height: 8),
-              Text("Login to continue",
-                  style: TextStyle(color: Colors.grey[600])),
-
-              const SizedBox(height: 32),
-
-              Center(
-                child: Card(
-                  elevation: 6,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        SizedBox(
-                          width: fieldWidth,
-                          child: AuthTextField(
-                            label: "Email",
-                            controller: emailController,
-                            prefixIcon: Icons.email_outlined,
-                          ),
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ✅ Title in BLUE
+                      const Text(
+                        "Welcome to the Product Discovery Portal",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue, // ✅ Changed to blue
                         ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: fieldWidth,
-                          child: AuthTextField(
-                            label: "Password",
-                            controller: passwordController,
-                            isPassword: true,
-                            prefixIcon: Icons.lock_outline,
-                          ),
+                      ),
+
+                      const SizedBox(height: 32),
+
+                      // ✅ Login card centered
+                      Card(
+                        elevation: 6,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                        const SizedBox(height: 24),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            children: [
+                              SizedBox(
+                                width: fieldWidth,
+                                child: AuthTextField(
+                                  label: "Email",
+                                  controller: emailController,
+                                  prefixIcon: Icons.email_outlined,
+                                ),
+                              ),
 
-                        SizedBox(
-                          width: fieldWidth,
-                          height: 44,
-                          child: ElevatedButton(
-                            onPressed: loading
-                                ? null
-                                : () async {
-                                    setState(() => loading = true);
+                              const SizedBox(height: 12),
 
-                                    final result =
-                                        await AuthService.login(
-                                      emailController.text.trim(),
-                                      passwordController.text.trim(),
-                                    );
+                              SizedBox(
+                                width: fieldWidth,
+                                child: AuthTextField(
+                                  label: "Password",
+                                  controller: passwordController,
+                                  isPassword: true,
+                                  prefixIcon: Icons.lock_outline,
+                                ),
+                              ),
 
-                                    setState(() => loading = false);
+                              const SizedBox(height: 24),
 
-                                    if (result != null) {
-                                      Navigator.pushReplacement(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => HomeScreen(
-                                            username: result.username,
-                                          ),
-                                        ),
-                                      );
-                                    } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content:
-                                              Text("Invalid credentials"),
-                                        ),
-                                      );
-                                    }
-                                  },
-                            child: loading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
+                              SizedBox(
+                                width: fieldWidth,
+                                height: 44,
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF2563EB),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
                                     ),
-                                  )
-                                : const Text("Login"),
+                                  ),
+                                  onPressed: loading
+                                      ? null
+                                      : () async {
+                                          setState(
+                                              () => loading = true);
+
+                                          final result =
+                                              await AuthService.login(
+                                            emailController.text.trim(),
+                                            passwordController.text.trim(),
+                                          );
+
+                                          setState(
+                                              () => loading = false);
+
+                                          if (result != null) {
+                                            UserSession.currentUserId = result.userId;
+                                            Navigator.pushReplacement(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) => HomeScreen(
+                                                  username:
+                                                      result.username,
+                                                ),
+                                              ),
+                                            );
+                                          } else {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                    "Invalid credentials"),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  child: loading
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child:
+                                              CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Text(
+                                          "Login",
+                                          style: TextStyle(fontSize: 16),
+                                        ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // ✅ Register link
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            "Don’t have an account?",
+                            style:
+                                TextStyle(color: Colors.grey[700]),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const RegisterScreen(),
+                                ),
+                              );
+                            },
+                            child: const Text("Create one"),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ),
-
-              const SizedBox(height: 24),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text("Don’t have an account?",
-                      style: TextStyle(color: Colors.grey[700])),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const RegisterScreen(),
-                        ),
-                      );
-                    },
-                    child: const Text("Create one"),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

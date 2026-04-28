@@ -59,4 +59,16 @@ static Future<List<Product>> searchProducts({
     throw Exception("Search failed");
   }
 }
+static Future<List<Product>> fetchSimilarProducts(
+    String productId) async {
+  final response = await http.get(
+    Uri.parse("$baseUrl/products/$productId/similar"),
+  );
+
+  if (response.statusCode != 200) return [];
+
+  final List data = jsonDecode(response.body);
+  return data.map((e) => Product.fromJson(e)).toList();
 }
+}
+

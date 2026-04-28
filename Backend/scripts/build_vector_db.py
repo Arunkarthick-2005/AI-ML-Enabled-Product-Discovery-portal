@@ -172,7 +172,9 @@ for product in products:
     # ✅ METADATA (CHROMA‑SAFE)
     metadatas.append({
         "pid": pid,
+        "title": safe_meta_str(product.get("title")),
         "brand": safe_meta_str(product.get("brand")),
+        "description": safe_meta_str(product.get("description")),
         "category_l1": safe_meta_str(product.get("category", {}).get("level_1")),
         "category_l2": safe_meta_str(product.get("category", {}).get("level_2")),
         "category_l3": safe_meta_str(product.get("category", {}).get("level_3")),

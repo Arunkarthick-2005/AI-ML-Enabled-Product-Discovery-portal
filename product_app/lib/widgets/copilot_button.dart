@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:product_app/screens/copilot_chat_screen.dart';
 
 class CopilotButton extends StatelessWidget {
-  const CopilotButton({super.key});
+  final VoidCallback onTap;
+
+  const CopilotButton({super.key, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return FloatingActionButton(
-      onPressed: () {
-        Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => CopilotChatScreen()),
-      );
-    },
-    child: Icon(Icons.smart_toy),
+      backgroundColor: Colors.blue, // ✅ changed to blue
+      onPressed: onTap,
+      child: const Icon(
+        Icons.auto_awesome,
+        color: Colors.white, // ✅ good contrast
+      ),
     );
   }
 }

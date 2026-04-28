@@ -1,33 +1,28 @@
 import 'package:flutter/material.dart';
-import '../screens/search_result_screen.dart';
 
 class SearchBarWidget extends StatelessWidget {
-  const SearchBarWidget({super.key});
+  final void Function(String query)? onSearch;
+
+  const SearchBarWidget({
+    super.key,
+    this.onSearch,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final controller = TextEditingController();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: TextField(
-        controller: controller,
-        decoration: const InputDecoration(
-          hintText: "Search products...",
-          prefixIcon: Icon(Icons.search),
-          border: OutlineInputBorder(),
+    return TextField(
+      decoration: InputDecoration(
+        hintText: "Search products...",
+        prefixIcon: const Icon(Icons.search),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
         ),
-        onSubmitted: (value) {
-          if (value.trim().isEmpty) return;
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SearchResultScreen(query: value.trim()),
-            ),
-          );
-        },
       ),
+      onSubmitted: (value) {
+        if (onSearch != null && value.trim().isNotEmpty) {
+          onSearch!(value.trim());
+        }
+      },
     );
   }
 }

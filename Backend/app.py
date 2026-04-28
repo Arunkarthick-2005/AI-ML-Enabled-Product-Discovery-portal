@@ -8,18 +8,47 @@ import re
 import traceback
 import requests
 from typing import List
-
+from utils.retriever import retrieve_for_rag
+from utils.context_builder import build_product_context
+from utils.prompt import build_prompt
+from utils.llm import generate
+from utils.intent import detect_intent
 import chromadb
 from sentence_transformers import SentenceTransformer
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pymongo.errors import PyMongoError
-
-from database import users_collection, products_collection
+from llama_cpp import Llama         
+from utils.recommendation_engine import (
+    log_product_event,
+    get_trending_categories,
+    get_user_recommendations
+)
+from pydantic import BaseModel
+from typing import Optional
+from database import users_collection, products_collection, product_view_events
 from models import UserRegister, UserLogin, Product
 from auth import hash_password, verify_password, create_access_token
 
+
+class LogInteractionRequest(BaseModel):
+    user_id: str
+    product_id: str
+    event_type: str          # view | search_view | search_impression
+    source: Optional[str] = "unknown"
+
+
+class ProductCopilotRequest(BaseModel):
+    product_id: str
+    question: str
+
+class CopilotRequest(BaseModel):
+    query: str
+
+class CopilotResponse(BaseModel):
+    answer: str
+    sources: List[str]
 
 # =================================================
 # SEMANTIC SEARCH SETUP
@@ -28,10 +57,21 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHROMA_PERSIST_DIR = os.path.join(BASE_DIR, "chroma_db")
 MODEL_PATH = os.path.join(BASE_DIR, "models", "all-MiniLM-L6-v2")
 
+LLM_MODEL_PATH = r"C:\Users\arunkarthick.l\Documents\PoC\Backend\models\Quantized Mistral Model\mistral-7b-instruct-v0.3-q4_k_m.gguf"
+
+
 chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
 chroma_collection = chroma_client.get_collection("products")
 
 embedding_model = SentenceTransformer(MODEL_PATH)
+
+LLM = Llama(
+    model_path=LLM_MODEL_PATH,
+    n_ctx=4096,
+    n_threads=8,
+    temperature=0.3,
+    verbose=False
+)
 
 # =================================================
 # APP INIT
@@ -46,9 +86,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
 # =================================================
 # SAFE DB WRAPPER
 # =================================================
+
+TITLE_INDEX = {
+    p["title"].lower(): p["pid"]
+    for p in products_collection.find({}, {"title": 1, "pid": 1})
+    if p.get("title") and p.get("pid")
+}
+
 def safe_find(cursor_fn, error_message="Database operation failed"):
     try:
         return cursor_fn()
@@ -110,6 +159,19 @@ def normalize_specifications(value):
 
     if not value:
         return None
+    
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        normalized = []
+        for item in value:
+            if "=" in item:
+                key, val = item.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if key or val:
+                    normalized.append({"key": key, "value": val})
+
+        return {"product_specification": normalized} if normalized else None
+
 
     # ✅ Case 1: Already normalized
     if isinstance(value, dict) and "product_specification" in value:
@@ -159,6 +221,19 @@ def normalize_specifications(value):
             return None
 
     return None
+
+def specs_to_text(specs):
+    if not specs or "product_specification" not in specs:
+        return "Not available"
+
+    lines = []
+    for item in specs["product_specification"]:
+        key = item.get("key")
+        val = item.get("value")
+        if key or val:
+            lines.append(f"- {key}: {val}")
+
+    return "\n".join(lines) if lines else "Not available"
 
 # =================================================
 # SEARCH HELPERS
@@ -235,7 +310,7 @@ def login(user: UserLogin):
 @app.get("/products/search", response_model=List[Product])
 def search_products(
     q: str = Query(..., min_length=1),
-    top_k: int = 20
+    top_k: int = 30
 ):
     # ------------------------------------------------
     # 1. Semantic recall (ALWAYS)
@@ -374,6 +449,52 @@ def search_products(
     return products
 
 
+@app.get("/products/trending-by-category")
+def trending_by_category(
+    top_k: int = 5,
+    category_level: str = "category_l2"
+):
+    """
+    Returns top K trending categories with their top product.
+    """
+    try:
+        category_map = get_trending_categories(
+            top_k_categories=top_k,
+            category_level=category_level
+        )
+
+        if not category_map:
+            return {}
+
+        product_ids = [
+            pid
+            for pids in category_map.values()
+            for pid in pids
+        ]
+
+        products = list(
+            products_collection.find(
+                {"pid": {"$in": product_ids}},
+                {"_id": 0}
+            )
+        )
+
+        product_map = {p["pid"]: p for p in products}
+
+        response = {}
+        for category, pids in category_map.items():
+            response[category] = [
+                product_map[pid]
+                for pid in pids
+                if pid in product_map
+            ]
+
+        return response
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 # =================================================
 # PRODUCT DETAIL
 # =================================================
@@ -395,6 +516,261 @@ def get_product(pid: str):
     product["specifications"] = normalize_specifications(product.get("specifications"))
 
     return Product(**product)
+
+
+
+@app.post("/recommendations/log-interaction")
+def log_interaction_api(req: LogInteractionRequest):
+    """
+    Logs a user-product interaction.
+    """
+    try:
+        log_product_event(
+            user_id=req.user_id,
+            product_id=req.product_id,
+            event_type=req.event_type,
+            source=req.source
+        )
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from utils.als_trainer import recommend_for_user
+
+@app.get("/recommendations/ml/{user_id}")
+def als_recommendations(user_id: str):
+    product_ids = recommend_for_user(user_id)
+
+    if not product_ids:
+        return []
+
+    products = list(
+        products_collection.find(
+            {"pid": {"$in": product_ids}},
+            {"_id": 0}
+        )
+    )
+
+    product_map = {p["pid"]: p for p in products}
+    return [product_map[pid] for pid in product_ids if pid in product_map]
+
+@app.get("/products/{pid}/similar", response_model=List[Product])
+def get_similar_products(pid: str, limit: int = 6):
+    """
+    Retrieve products similar to the given product
+    using embedding cosine similarity.
+    """
+
+    # 1️⃣ Fetch embedding for the given product
+    result = chroma_collection.get(
+        where={"pid": pid},
+        include=["embeddings"]
+    )
+
+    # ✅ SAFE CHECK (NO boolean ambiguity)
+    if (
+        result is None
+        or "embeddings" not in result
+        or result["embeddings"] is None
+        or len(result["embeddings"]) == 0
+        or result["embeddings"][0] is None
+    ):
+        return []
+
+    query_embedding = result["embeddings"][0]
+
+    # 2️⃣ Query for nearest neighbors
+    similar = chroma_collection.query(
+        query_embeddings=[query_embedding],
+        n_results=limit + 1,  # +1 because original product may appear
+        include=["metadatas"]
+    )
+
+    if (
+        similar is None
+        or "metadatas" not in similar
+        or similar["metadatas"] is None
+        or len(similar["metadatas"]) == 0
+    ):
+        return []
+
+    # 3️⃣ Extract similar product IDs (exclude the same product)
+    similar_pids = []
+    for meta in similar["metadatas"][0]:
+        if meta and meta.get("pid") != pid:
+            similar_pids.append(meta["pid"])
+
+    if not similar_pids:
+        return []
+
+    # 4️⃣ Fetch full product records from MongoDB
+    products = list(
+        products_collection.find(
+            {"pid": {"$in": similar_pids}},
+            {"_id": 0}
+        )
+    )
+
+    product_map = {p["pid"]: p for p in products}
+
+    # Preserve similarity order
+    ordered_products = [
+        Product(**product_map[pid])
+        for pid in similar_pids
+        if pid in product_map
+    ]
+
+    return ordered_products
+
+@app.get("/recommendations/user/{user_id}")
+def get_user_recommendations_api(user_id: str, limit: int = 10):
+    try:
+        print("USER ID:", user_id)
+
+        product_ids = get_user_recommendations(
+            user_id=user_id,
+            limit=limit
+        )
+
+        print("PRODUCT IDS:", product_ids)
+
+        if not product_ids:
+            return []
+
+        products = list(
+            products_collection.find(
+                {"pid": {"$in": product_ids}},
+                {"_id": 0}
+            )
+        )
+
+        print("PRODUCT DOCS:", len(products))
+
+        product_map = {p["pid"]: p for p in products}
+
+        return [
+            product_map[pid]
+            for pid in product_ids
+            if pid in product_map
+        ]
+
+    except Exception as e:
+        print("❌ RECOMMENDATION ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/copilot/chat")
+def copilot_chat(req: CopilotRequest):
+    intent = detect_intent(req.query)
+
+    products = retrieve_for_rag(
+        query=req.query,
+        embedding_model=embedding_model,
+        chroma_collection=chroma_collection,
+        products_collection=products_collection,
+        brand_index=BRAND_INDEX,
+        title_index=TITLE_INDEX,
+        max_context=6
+    )
+
+    # Intent‑aware fallback
+    if not products:
+        if intent in {"compare", "alternative", "recommend","explain"}:
+            return {
+                "answer": "I couldn’t find enough relevant products in the catalog to answer this request.",
+                "sources": []
+            }
+
+        # explain / qa → allow answer without products
+        prompt = build_prompt("", req.query)
+        return {
+            "answer": generate(prompt),
+            "sources": []
+        }
+
+    # Build context safely
+    blocks = []
+    for p in products:
+        raw_specs = p.get("specifications")
+        specs_txt = specs_to_text(normalize_specifications(raw_specs))
+
+        blocks.append(f"""
+Product:
+- Name: {p.get("title")}
+- Brand: {p.get("brand")}
+- Category: {p.get("category_l3") or p.get("category_l2") or p.get("category_l1")}
+- Price: {p.get("price")}
+- Specifications:
+{specs_txt}
+""".strip())
+
+    context = "\n\n".join(blocks[:3])  # context budget
+    prompt = build_prompt(context, req.query)
+
+    return {
+        "answer": generate(prompt),
+        "sources": [p.get("title") for p in products]
+    }
+# -------------------------------------
+# PRODUCT-SPECIFIC COPILOT
+# -------------------------------------
+@app.post("/copilot/chat/product")
+def product_copilot_chat(req: ProductCopilotRequest):
+    # ---------------------------------
+    # 1️⃣ Fetch the exact product
+    # ---------------------------------
+    product = products_collection.find_one(
+        {"pid": req.product_id},
+        {"_id": 0}
+    )
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    # ---------------------------------
+    # 2️⃣ DO NOT run semantic retrieval
+    # ---------------------------------
+    # This is intentional to prevent:
+    # - alternatives
+    # - hallucination
+    # - cross-product leakage
+
+    raw_specs = product.get("specifications")
+    specs_txt = specs_to_text(
+        normalize_specifications(raw_specs)
+    )
+
+    # ---------------------------------
+    # 3️⃣ Build STRICT single-product context
+    # ---------------------------------
+    context = f"""
+Product:
+- Name: {product.get("title")}
+- Brand: {product.get("brand")}
+- Category: {product.get("category_l3") or product.get("category_l2") or product.get("category_l1")}
+- Price: {product.get("price")}
+- Specifications:
+{specs_txt}
+""".strip()
+
+    # ---------------------------------
+    # 4️⃣ Build product-scoped prompt
+    # ---------------------------------
+    prompt = build_prompt(context, req.question)
+
+    # ---------------------------------
+    # 5️⃣ Generate answer
+    # ---------------------------------
+    answer = generate(prompt)
+
+    return {
+        "answer": answer,
+        "sources": [product.get("title")]
+    }
 
 # =================================================
 # IMAGE PROXY

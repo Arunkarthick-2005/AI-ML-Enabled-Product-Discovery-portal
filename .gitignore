@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.log
 venv/
 .env
@@ -13,6 +14,8 @@ product_app/linux/
 product_app/windows/
 product_app/web/
 Backend/models/all-MiniLM-L6-v2
+Backend/models/Quantized Mistral Model
+Backend/models/als_model.pkl
 Backend/chroma_db
 # Flutter generated
 .dart_tool/
@@ -40,3 +43,4 @@ Thumbs.db
 # Large data files (optional)
 *.csv
 *.json
+
