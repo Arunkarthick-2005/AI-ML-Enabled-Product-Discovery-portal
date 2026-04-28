@@ -242,7 +242,7 @@ def retrieve_for_rag(
         mentioned_brands = {
             b.lower()
             for b in brand_index
-            if b.lower() in query_lower and len(b) >= 2
+            if b.lower() in query_lower and len(b) >= 3
         }
 
         dbg(f"Compared brands detected: {mentioned_brands}")

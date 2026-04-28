@@ -9,6 +9,9 @@ STRICT RULES:
 - If data is not available, explicitly say "Not available".
 - DO NOT use tables or markdown tables.
 - Use bullet points only.
+- Answer ONLY the given question.
+- Do NOT generate additional questions or follow‑up sections.
+- Stop immediately after completing the answer.
 
 INTENT RULES:
 - For comparison: Compare the product/type with the product/type specifications.
@@ -25,8 +28,11 @@ def build_prompt(context: str, query: str) -> str:
 CATALOG CONTEXT:
 {context}
 
-USER QUERY:
+
+Answer the following question using only the catalog context above.
+
+Question:
 {query}
 
-ANSWER:
+Answer:
 """
