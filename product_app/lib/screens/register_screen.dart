@@ -23,7 +23,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -35,6 +35,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const Text(
                 "Create Account",
                 style: TextStyle(
+                  color : Colors.blue,
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
                 ),
@@ -44,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 "Sign up to get started",
                 style: TextStyle(
                   fontSize: 16,
-                  color: Colors.grey[600],
+                  fontWeight: FontWeight.bold,
                 ),
               ),
 
@@ -170,6 +171,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             height: 44,
                             child: ElevatedButton(
                               style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2563EB),
+                                foregroundColor: Colors.white,
                                 padding: EdgeInsets.zero,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),

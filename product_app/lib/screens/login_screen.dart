@@ -23,7 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       // ✅ Yellow background for full screen
-      backgroundColor: Colors.yellow.shade100,
+      backgroundColor: Colors.white,
 
       body: LayoutBuilder(
         builder: (context, constraints) {

@@ -4,7 +4,11 @@ import ast
 import math
 import html
 import json
+import numpy as np
+from sklearn.cluster import KMeans
 import re
+from collections import Counter
+from typing import Set
 import traceback
 import requests
 from typing import List
@@ -49,6 +53,25 @@ class CopilotRequest(BaseModel):
 class CopilotResponse(BaseModel):
     answer: str
     sources: List[str]
+
+class RecommendationRequest(BaseModel):
+    query: str
+    exclude_pids: List[str] = []
+
+# =================================================
+# HOME COLLECTION PROJECTION
+# =================================================
+HOME_PROJECTION = {
+    "_id": 0,
+    "pid": 1,
+    "title": 1,
+    "brand": 1,
+    "price": 1,
+    "images": 1,
+    "category_l1": 1,
+    "category_l2": 1,
+    "category_l3": 1,
+}
 
 # =================================================
 # SEMANTIC SEARCH SETUP
@@ -222,6 +245,32 @@ def normalize_specifications(value):
 
     return None
 
+def exact_word_match(text: str, word: str) -> bool:
+    if not text:
+        return False
+    pattern = rf"\b{re.escape(word.lower())}\b"
+    return bool(re.search(pattern, text.lower()))
+
+
+def extract_primary_product_type(products):
+    """
+    Infer dominant product type token from search results.
+    """
+    tokens = []
+
+    for p in products:
+        text = " ".join(
+            str(p.get(k, "")).lower()
+            for k in ("title", "category_l1", "category_l2", "category_l3")
+        )
+
+        for t in re.findall(r"[a-z]{4,}", text):
+            tokens.append(t)
+
+    if not tokens:
+        return None
+
+    return Counter(tokens).most_common(1)[0][0]
 def specs_to_text(specs):
     if not specs or "product_specification" not in specs:
         return "Not available"
@@ -313,7 +362,7 @@ def search_products(
     top_k: int = 30
 ):
     # ------------------------------------------------
-    # 1. Semantic recall (ALWAYS)
+    # 1. Semantic Recall (Candidate Generation)
     # ------------------------------------------------
     query_embedding = embedding_model.encode(
         q,
@@ -334,21 +383,20 @@ def search_products(
         return []
 
     all_metadata = results["metadatas"][0]
-
     ranked_results = []
 
     # ------------------------------------------------
-    # 2. UNIFIED MATCHING + SCORING
+    # 2. Scoring (Semantic + Exact Intent Signals)
     # ------------------------------------------------
     for rank, meta in enumerate(all_metadata):
         pid = meta.get("pid")
         if not pid:
             continue
 
-        score = 1  # ✅ base score for semantic recall
+        score = 1  # ✅ base semantic score
         reasons = ["semantic"]
 
-        # ✅ PRICE (MANDATORY)
+        # ✅ PRICE FILTER (MANDATORY)
         if price_intent:
             price = meta.get("price", 0)
             t = price_intent["type"]
@@ -363,25 +411,25 @@ def search_products(
 
             reasons.append("price_ok")
 
-        # ✅ BRAND MATCH
+        # ✅ BRAND MATCH (EXACT WORD)
         if brand_intent:
-            brand = meta.get("brand")
-            if brand and normalize_text(brand) == normalize_text(brand_intent):
+            brand = meta.get("brand", "")
+            if exact_word_match(brand, brand_intent):
                 score += 3
                 reasons.append(f"brand_match:{brand_intent}")
 
-        # ✅ CATEGORY MATCH
+        # ✅ CATEGORY MATCH (EXACT WORD)
         for kw in keywords:
-            for lvl in ["category_l1", "category_l2", "category_l3"]:
-                if meta.get(lvl) and kw in meta[lvl].lower():
+            for lvl in ("category_l1", "category_l2", "category_l3"):
+                if exact_word_match(meta.get(lvl, ""), kw):
                     score += 2
                     reasons.append(f"category_match:{kw}")
                     break
 
-        # ✅ SPECIFICATION MATCH
+        # ✅ SPECIFICATION MATCH (EXACT WORD)
         for kw in keywords:
             for spec in meta.get("specifications", []):
-                if kw in str(spec).lower():
+                if exact_word_match(str(spec), kw):
                     score += 2
                     reasons.append(f"spec_match:{kw}")
                     break
@@ -393,11 +441,19 @@ def search_products(
             "reasons": reasons
         })
 
+    # ------------------------------------------------
+    # ✅ FILTER: Remove Pure-Semantic Results
+    # ------------------------------------------------
+    ranked_results = [
+        r for r in ranked_results
+        if r["score"] > 1
+    ]
+
     if not ranked_results:
         return []
 
     # ------------------------------------------------
-    # 3. SORT BY SCORE (DESC) THEN SEMANTIC RANK
+    # 3. Sort by Score then Semantic Rank
     # ------------------------------------------------
     ranked_results.sort(
         key=lambda x: (-x["score"], x["semantic_rank"])
@@ -406,19 +462,7 @@ def search_products(
     final_pids = [r["pid"] for r in ranked_results]
 
     # ------------------------------------------------
-    # DEBUG OUTPUT
-    # ------------------------------------------------
-    print("\n===== VERSION B RANKING DEBUG =====")
-    for r in ranked_results:
-        print(
-            f"PID: {r['pid']} | "
-            f"SCORE: {r['score']} | "
-            f"REASONS: {r['reasons']}"
-        )
-    print("==================================\n")
-
-    # ------------------------------------------------
-    # 4. FETCH FULL PRODUCTS
+    # 4. Fetch Full Product Docs
     # ------------------------------------------------
     raw_products = list(
         products_collection.find(
@@ -427,7 +471,6 @@ def search_products(
         )
     )
 
-    # Preserve ranking order
     product_map = {p["pid"]: p for p in raw_products}
 
     products: List[Product] = []
@@ -444,9 +487,11 @@ def search_products(
         p["specifications"] = normalize_specifications(
             p.get("specifications")
         )
+
         products.append(Product(**p))
 
     return products
+
 
 
 @app.get("/products/trending-by-category")
@@ -658,6 +703,300 @@ def get_user_recommendations_api(user_id: str, limit: int = 10):
     except Exception as e:
         print("❌ RECOMMENDATION ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/products/recommended", response_model=List[Product])
+def get_dynamic_recommendations(req: RecommendationRequest):
+    query = req.query
+    exclude_pids = set(req.exclude_pids)
+    limit = 12
+
+    # ------------------------------------------------
+    # 1️⃣ Identify primary product type (unchanged)
+    # ------------------------------------------------
+    search_products = list(
+        products_collection.find(
+            {"pid": {"$in": list(exclude_pids)}},
+            {"title": 1, "category_l1": 1, "category_l2": 1, "category_l3": 1}
+        )
+    )
+
+    primary_type = extract_primary_product_type(search_products)
+
+    # ------------------------------------------------
+    # 2️⃣ Broad semantic recall (unchanged)
+    # ------------------------------------------------
+    query_embedding = embedding_model.encode(
+        query,
+        normalize_embeddings=True
+    )
+
+    recall = chroma_collection.query(
+        query_embeddings=[query_embedding.tolist()],
+        n_results=300,
+        include=["embeddings", "metadatas"]
+    )
+
+    raw_candidates = []
+    seen = set()
+
+    # ------------------------------------------------
+    # 3️⃣ Exclude same product type (core logic)
+    # ------------------------------------------------
+    for emb, meta in zip(
+        recall["embeddings"][0],
+        recall["metadatas"][0]
+    ):
+        pid = meta.get("pid")
+        if not pid or pid in exclude_pids or pid in seen:
+            continue
+
+        text = " ".join(
+            str(meta.get(k, "")).lower()
+            for k in ("title", "category_l1", "category_l2", "category_l3")
+        )
+
+        if primary_type and primary_type in text:
+            continue
+
+        seen.add(pid)
+        score = float(np.dot(emb, query_embedding))
+        raw_candidates.append((score, pid, meta))
+
+    if not raw_candidates:
+        return []
+
+    # ------------------------------------------------
+    # ✅ 4️⃣ Dynamic Confidence Gate (NEW)
+    # ------------------------------------------------
+    scores = np.array([s for s, _, _ in raw_candidates])
+    mean_score = scores.mean()
+    std_score = scores.std()
+
+    confidence_cutoff = mean_score - 0.5 * std_score
+
+    confident_candidates = [
+        c for c in raw_candidates
+        if c[0] >= confidence_cutoff
+    ]
+
+    if not confident_candidates:
+        confident_candidates = raw_candidates
+
+    # ------------------------------------------------
+    # ✅ 5️⃣ Dynamic Noise Suppression (NEW)
+    # ------------------------------------------------
+    titles = [
+        meta.get("title", "")
+        for _, _, meta in confident_candidates
+    ]
+
+    title_embeddings = embedding_model.encode(
+        titles,
+        normalize_embeddings=True
+    )
+
+    centroid = np.mean(title_embeddings, axis=0)
+
+    def cosine_distance(a, b):
+        return 1.0 - float(np.dot(a, b))
+
+    noise_scores = np.array([
+        cosine_distance(te, centroid)
+        for te in title_embeddings
+    ])
+
+    noise_mean = noise_scores.mean()
+    noise_std = noise_scores.std()
+    noise_cutoff = noise_mean + 0.75 * noise_std
+
+    adjusted_candidates = []
+
+    for (score, pid, meta), noise in zip(
+        confident_candidates, noise_scores
+    ):
+        adjusted_score = score
+        if noise > noise_cutoff:
+            adjusted_score *= 0.4   # soft suppression
+
+        adjusted_candidates.append((adjusted_score, pid))
+
+    # ------------------------------------------------
+    # 6️⃣ Rank & return (unchanged structure)
+    # ------------------------------------------------
+    adjusted_candidates.sort(key=lambda x: x[0], reverse=True)
+    final_pids = [pid for _, pid in adjusted_candidates[:limit]]
+
+    products = list(
+        products_collection.find(
+            {"pid": {"$in": final_pids}},
+            {"_id": 0}
+        )
+    )
+
+    product_map = {p["pid"]: p for p in products}
+
+    return [
+        Product(**product_map[p])
+        for p in final_pids
+        if p in product_map
+    ]
+
+@app.get("/home/collections")
+def get_home_collections(limit: int = 20):
+    """
+    Home discovery collections shown before search.
+
+    Categories:
+    - Electronics
+    - Furniture
+    - Clothing (50% Men's Apparel + 50% Women's Apparel)
+
+    Guarantees:
+    - Exact word matching
+    - Apparel-only clothing
+    - One product per brand
+    """
+
+    def one_per_brand(pipeline, limit):
+        return list(
+            products_collection.aggregate(
+                pipeline + [
+                    {
+                        "$group": {
+                            "_id": "$brand",
+                            "product": {"$first": "$$ROOT"}
+                        }
+                    },
+                    {"$replaceRoot": {"newRoot": "$product"}},
+                    {"$limit": limit}
+                ]
+            )
+        )
+
+    # =================================================
+    # ELECTRONICS
+    # =================================================
+    for_electronics = one_per_brand([
+        {
+            "$match": {
+                "$or": [
+                    {"category_l1": {"$regex": r"\bElectronics\b", "$options": "i"}},
+                    {"category_l2": {"$regex": r"\bLaptop Accessories\b|\bMobiles & Accessories\b", "$options": "i"}},
+                    {"category_l3": {"$regex": r"\bMobile\b|\bLaptop\b|\bCharger\b|\bPower Bank\b|\bMouse\b|\bKeyboard\b", "$options": "i"}},
+                    {"title": {"$regex": r"\bMobile\b|\bLaptop\b|\bTablet\b|\bHeadphone\b|\bCharger\b", "$options": "i"}},
+                ]
+            }
+        },
+        {"$project": HOME_PROJECTION},
+    ], limit)
+
+    # =================================================
+    # FURNITURE
+    # =================================================
+    for_furniture = one_per_brand([
+        {
+            "$match": {
+                "$or": [
+                    {"category_l1": {"$regex": r"\bFurniture\b", "$options": "i"}},
+                    {"category_l2": {"$regex": r"\bFurniture\b|\bSofa\b|\bChair\b|\bTable\b|\bBed\b|\bWardrobe\b", "$options": "i"}},
+                    {"category_l3": {"$regex": r"\bSofa\b|\bChair\b|\bTable\b|\bBed\b|\bDining\b|\bShelf\b", "$options": "i"}},
+                    {"title": {"$regex": r"\bSofa\b|\bChair\b|\bTable\b|\bBed\b|\bFurniture\b", "$options": "i"}},
+                ]
+            }
+        },
+        {"$project": HOME_PROJECTION},
+    ], limit)
+
+    # =================================================
+    # CLOTHING — MEN (APPAREL ONLY)
+    # =================================================
+    half = limit // 2
+
+    men_clothing = one_per_brand([
+        {
+            "$match": {
+                "$and": [
+                    # ✅ Men's apparel
+                    {
+                        "$or": [
+                            {"category_l2": {"$regex": r"\bMen's Clothing\b|\bMen Clothing\b", "$options": "i"}},
+                            {"category_l3": {"$regex": r"\bMen's Clothing\b|\bMen Clothing\b", "$options": "i"}},
+                            {"title": {"$regex": r"\bMen\b|\bMen's\b|\bMens\b", "$options": "i"}},
+                        ]
+                    },
+                    # ✅ Only apparel types
+                    {
+                        "$or": [
+                            {"category_l3": {"$regex": r"\bShirt\b|\bT-Shirt\b|\bJeans\b|\bTrouser\b|\bPant\b|\bKurta\b|\bJacket\b|\bHoodie\b", "$options": "i"}},
+                            {"title": {"$regex": r"\bShirt\b|\bT-Shirt\b|\bJeans\b|\bTrouser\b|\bPant\b|\bKurta\b|\bJacket\b|\bHoodie\b", "$options": "i"}},
+                        ]
+                    },
+                    # ❌ EXCLUDE women
+                    {
+                        "$nor": [
+                            {"title": {"$regex": r"\bWomen\b|\bGirl\b|\bFemale\b", "$options": "i"}},
+                        ]
+                    },
+                    # ❌ EXCLUDE watches, footwear, accessories
+                    {
+                        "$nor": [
+                            {"title": {"$regex": r"\bWatch\b|\bWrist Watch\b|\bSlippers\b|\bSandals\b|\bShoes\b|\bSneakers\b", "$options": "i"}},
+                            {"category_l3": {"$regex": r"\bWatch\b|\bFootwear\b|\bSlippers\b|\bShoes\b", "$options": "i"}},
+                        ]
+                    },
+                ]
+            }
+        },
+        {"$project": HOME_PROJECTION},
+    ], half)
+
+    # =================================================
+    # CLOTHING — WOMEN (APPAREL ONLY)
+    # =================================================
+    women_clothing = one_per_brand([
+        {
+            "$match": {
+                "$and": [
+                    {
+                        "$or": [
+                            {"category_l2": {"$regex": r"\bWomen's Clothing\b|\bWomen Clothing\b", "$options": "i"}},
+                            {"category_l3": {"$regex": r"\bWomen's Clothing\b|\bWomen Clothing\b", "$options": "i"}},
+                            {"title": {"$regex": r"\bWomen\b|\bWomen's\b|\bGirl\b|\bFemale\b", "$options": "i"}},
+                        ]
+                    },
+                    # ✅ Only apparel
+                    {
+                        "$or": [
+                            {"category_l3": {"$regex": r"\bDress\b|\bKurti\b|\bTop\b|\bT-Shirt\b|\bJeans\b|\bLegging\b|\bSkirt\b|\bSaree\b", "$options": "i"}},
+                            {"title": {"$regex": r"\bDress\b|\bKurti\b|\bTop\b|\bT-Shirt\b|\bJeans\b|\bLegging\b|\bSkirt\b|\bSaree\b", "$options": "i"}},
+                        ]
+                    },
+                    # ❌ EXCLUDE watches & footwear
+                    {
+                        "$nor": [
+                            {"title": {"$regex": r"\bWatch\b|\bWrist Watch\b|\bSlippers\b|\bSandals\b|\bShoes\b", "$options": "i"}},
+                            {"category_l3": {"$regex": r"\bWatch\b|\bFootwear\b|\bSlippers\b|\bShoes\b", "$options": "i"}},
+                        ]
+                    },
+                ]
+            }
+        },
+        {"$project": HOME_PROJECTION},
+    ], half)
+
+    # =================================================
+    # MERGED CLOTHING
+    # =================================================
+    clothings = men_clothing + women_clothing
+
+    return {
+        "for_electronics": for_electronics,
+        "for_furniture": for_furniture,
+        "for_clothings": clothings,
+    }
+
 
 
 @app.post("/copilot/chat")
