@@ -3,7 +3,7 @@ import '../widgets/auth_text_field.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
 import '../utils/user_session.dart';
-import 'package:product_app/screens/register_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,36 +22,31 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // ✅ Yellow background for full screen
       backgroundColor: Colors.white,
 
       body: LayoutBuilder(
         builder: (context, constraints) {
           return SingleChildScrollView(
             child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: constraints.maxHeight,
-              ),
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // ✅ Title in BLUE
                       const Text(
                         "Welcome to the Product Discovery Portal",
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.bold,
-                          color: Colors.blue, // ✅ Changed to blue
+                          color: Colors.blue,
                         ),
                       ),
 
                       const SizedBox(height: 32),
 
-                      // ✅ Login card centered
                       Card(
                         elevation: 6,
                         shape: RoundedRectangleBorder(
@@ -98,45 +93,47 @@ class _LoginScreenState extends State<LoginScreen> {
                                   onPressed: loading
                                       ? null
                                       : () async {
-                                          setState(
-                                              () => loading = true);
+                                          setState(() => loading = true);
 
-                                          final result =
+                                          final AuthResult? result =
                                               await AuthService.login(
                                             emailController.text.trim(),
                                             passwordController.text.trim(),
                                           );
 
-                                          setState(
-                                              () => loading = false);
+                                          setState(() => loading = false);
 
-                                          if (result != null) {
-                                            UserSession.currentUserId = result.userId;
-                                            Navigator.pushReplacement(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) => HomeScreen(
-                                                  username:
-                                                      result.username,
-                                                ),
-                                              ),
-                                            );
-                                          } else {
+                                          if (result == null) {
                                             ScaffoldMessenger.of(context)
                                                 .showSnackBar(
                                               const SnackBar(
-                                                content: Text(
-                                                    "Invalid credentials"),
+                                                content:
+                                                    Text("Invalid credentials"),
                                               ),
                                             );
+                                            return;
                                           }
+
+                                          // ✅ STORE UUID GLOBALLY
+                                          UserSession.currentUserId =
+                                              result.userId;
+
+                                          // ✅ NAVIGATE USING UUID
+                                          Navigator.pushReplacement(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => HomeScreen(
+                                                userId: result.userId,
+                                                username: result.username,
+                                              ),
+                                            ),
+                                          );
                                         },
                                   child: loading
                                       ? const SizedBox(
                                           width: 18,
                                           height: 18,
-                                          child:
-                                              CircularProgressIndicator(
+                                          child: CircularProgressIndicator(
                                             strokeWidth: 2,
                                             color: Colors.white,
                                           ),
@@ -154,22 +151,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
                       const SizedBox(height: 24),
 
-                      // ✅ Register link
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
                             "Don’t have an account?",
-                            style:
-                                TextStyle(color: Colors.grey[700]),
+                            style: TextStyle(color: Colors.grey[700]),
                           ),
                           TextButton(
                             onPressed: () {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) =>
-                                      const RegisterScreen(),
+                                  builder: (_) => const RegisterScreen(),
                                 ),
                               );
                             },

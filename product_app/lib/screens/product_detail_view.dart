@@ -5,7 +5,12 @@ import 'copilot_chat_view.dart';
 
 class ProductDetailView extends StatefulWidget {
   final String productId;
-  final void Function(String productId) onOpenProduct;
+  final void Function(
+  String productId, {
+  bool fromSearch,
+  bool fromSimilar,
+}) onOpenProduct;
+
 
   const ProductDetailView({
     super.key,
@@ -197,68 +202,90 @@ class _ProductDetailViewState extends State<ProductDetailView> {
 
   // ---------------- ✅ COMPACT CARD ----------------
   Widget _similarCard(Product p) {
-    return Material(
-      color: Colors.white,
+  return Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    elevation: 1.5,
+    child: InkWell(
       borderRadius: BorderRadius.circular(16),
-      elevation: 1.5,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => widget.onOpenProduct(p.pid),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                height: 110,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: p.images.isNotEmpty
-                      ? Image.network(_proxy(p.images.first),
-                          fit: BoxFit.contain)
-                      : const Icon(Icons.image, size: 32),
-                ),
+      onTap: () => widget.onOpenProduct(
+        p.pid,
+        fromSimilar: true, // ✅ Similar product click
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 110,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(height: 8),
-              Text(p.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: p.images.isNotEmpty
+                    ? Image.network(
+                        _proxy(p.images.first),
+                        fit: BoxFit.contain,
+                      )
+                    : const Icon(Icons.image, size: 32),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              p.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              p.brand ?? "",
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _price(p),
                   style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              Text(p.brand ?? "",
-                  style:
-                      TextStyle(fontSize: 12, color: Colors.grey.shade700)),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(_price(p),
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.bold)),
-                  InkWell(
-                    onTap: () => _openCopilot(p.pid),
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                          color: Colors.blue,
-                          borderRadius: BorderRadius.circular(6)),
-                      child: const Icon(Icons.auto_awesome,
-                          size: 14, color: Colors.white),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                InkWell(
+                  onTap: () => _openCopilot(p.pid),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome,
+                      size: 14,
+                      color: Colors.white,
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   String _proxy(String url) =>
       "http://localhost:8000/image-proxy?url=${Uri.encodeComponent(url)}";

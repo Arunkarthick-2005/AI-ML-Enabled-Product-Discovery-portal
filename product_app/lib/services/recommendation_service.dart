@@ -6,28 +6,28 @@ class RecommendationService {
   static const String baseUrl = "http://localhost:8000";
 
   // =================================================
-  // ✅ GENERIC INTERACTION LOGGER (NEW)
+  // GENERIC INTERACTION LOGGER
   // =================================================
   static Future<void> logInteraction({
     required String userId,
     required String productId,
-    required String eventType, // view | search_view | search_impression
+    required String eventType, // view | search_view
     String source = "unknown",
   }) async {
-      final response = await http.post(
-        Uri.parse("$baseUrl/recommendations/log-interaction"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "user_id": userId,
-          "product_id": productId,
-          "event_type": eventType,
-          "source": source,
-        }),
-      );
-
+    await http.post(
+      Uri.parse("$baseUrl/recommendations/log-interaction"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "user_id": userId,
+        "product_id": productId,
+        "event_type": eventType,
+        "source": source,
+      }),
+    );
   }
+
   // =================================================
-  // ✅ OPTIONAL: CONVENIENCE METHOD FOR NORMAL VIEW
+  // PRODUCT DETAIL VIEW
   // =================================================
   static Future<void> logView({
     required String userId,
@@ -38,6 +38,21 @@ class RecommendationService {
       productId: productId,
       eventType: "view",
       source: "detail_page",
+    );
+  }
+
+  // =================================================
+  // SEARCH RESULT CLICK (✅ NEW)
+  // =================================================
+  static Future<void> logSearchView({
+    required String userId,
+    required String productId,
+  }) async {
+    return logInteraction(
+      userId: userId,
+      productId: productId,
+      eventType: "search_view",
+      source: "search_results",
     );
   }
 

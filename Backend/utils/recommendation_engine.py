@@ -13,7 +13,7 @@ from database import product_view_events,products_collection
 EVENT_WEIGHTS = {
     "view": 1.0,               # normal product view
     "search_view": 2.5,        # strong intent
-    "search_impression": 0.3   # weak signal
+    "similar view": 1.8        # Medium signal
 }
 
 # Higher value = recent days matter more
@@ -229,7 +229,7 @@ def get_user_recommendations(
             continue
 
         # Track event presence
-        if event_type in ("view", "search_view"):
+        if event_type in ("view", "search_view","similar_view"):
             has_any_strong_event = True
             strong_products.add(pid)
         elif event_type == "search_impression":

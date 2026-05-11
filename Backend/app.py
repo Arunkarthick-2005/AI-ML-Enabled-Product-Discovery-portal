@@ -293,6 +293,17 @@ def extract_keywords(query: str):
         if len(token) > 2
     ]
 
+def detect_gender_intent(keywords: list[str]) -> str | None:
+    """
+    Detects explicit gender intent in query.
+    Returns 'men', 'women', or None
+    """
+    if any(k in ("men","men's", "mens", "boy", "boys") for k in keywords):
+        return "men"
+    if any(k in ("women", "womens","women's", "girl", "girls", "female") for k in keywords):
+        return "women"
+    return None
+
 def build_brand_index(products_collection):
     """
     Build a set of all brand names from MongoDB
@@ -350,7 +361,7 @@ def login(user: UserLogin):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": db_user["id"]})
-    return {"access_token": token}
+    return {"access_token": token, "user_id": db_user["id"]}
 
 
 # =================================================
@@ -384,6 +395,7 @@ def search_products(
 
     all_metadata = results["metadatas"][0]
     ranked_results = []
+    gender_intent = detect_gender_intent(keywords)
 
     # ------------------------------------------------
     # 2. Scoring (Semantic + Exact Intent Signals)
@@ -395,6 +407,22 @@ def search_products(
 
         score = 1  # ✅ base semantic score
         reasons = ["semantic"]
+
+        
+        title    = (meta.get("title") or "").lower()
+        cat1     = (meta.get("category_l1") or "").lower()
+        cat2     = (meta.get("category_l2") or "").lower()
+        cat3     = (meta.get("category_l3") or "").lower()
+
+        full_text = f"{title} {cat1} {cat2} {cat3}"
+        if gender_intent == "men":
+            if re.search(r"\bwomen\b|\bwomens\b|\bgirl\b|\bfemale\b", full_text):
+                continue
+
+        if gender_intent == "women":
+            if re.search(r"\bmen\b|\bmens\b|\bboy\b|\bmale\b", full_text):
+                continue
+
 
         # ✅ PRICE FILTER (MANDATORY)
         if price_intent:
@@ -433,6 +461,12 @@ def search_products(
                     score += 2
                     reasons.append(f"spec_match:{kw}")
                     break
+        # ✅ TITLE MATCH (LOW WEIGHT — SUPPORTING SIGNAL ONLY)
+        for kw in keywords:
+            if exact_word_match(meta.get("title", ""), kw):
+                score += 1
+                reasons.append(f"title_match:{kw}")
+                break   
 
         ranked_results.append({
             "pid": pid,

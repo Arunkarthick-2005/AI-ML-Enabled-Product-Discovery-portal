@@ -71,29 +71,14 @@ class AuthService {
 
       final data = jsonDecode(response.body);
 
-      final token = data["access_token"];
-      if (token == null) return null;
+      final String? token = data["access_token"];
+      final String? userId = data["user_id"]; // ✅ UUID from backend
+      final String username =
+          data["name"] ?? "User"; // display only
 
-      // ✅ USER ID (CRITICAL FOR RECOMMENDATIONS)
-      String? userId;
-
-      // Preferred backend response shape
-      if (data.containsKey("user") && data["user"] != null) {
-        userId = data["user"]["id"] ?? data["user"]["user_id"];
-      }
-
-      // Fallbacks (safe but temporary)
-      userId ??= data["user_id"];
-      userId ??= email; // ⚠️ last-resort fallback
-
-      if (userId == null) return null;
-
-      // ✅ USERNAME (DISPLAY PURPOSE ONLY)
-      String username = "User";
-      if (data.containsKey("user") && data["user"] != null) {
-        username = data["user"]["name"] ?? username;
-      } else if (data.containsKey("name")) {
-        username = data["name"];
+      // ✅ STRICT VALIDATION
+      if (token == null || userId == null) {
+        return null;
       }
 
       return AuthResult(
@@ -101,7 +86,6 @@ class AuthService {
         token: token,
         username: username,
       );
-
     } catch (e) {
       print("LOGIN ERROR: $e");
       return null;
