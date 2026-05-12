@@ -21,11 +21,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   HomeViewState _viewState = HomeViewState.home;
   HomeViewState? _previousViewState;
-  HomeViewState? _lastViewState;
 
   Future<List<Product>>? _searchFuture;
   Future<HomeCollections>? _homeFuture;
   Future<List<Product>>? _recentFuture;
+
+  // ✅ NEW: Trending per category
+  Future<Map<String, List<Product>>>? _trendingFuture;
 
   final List<String> _productHistory = [];
   String? _lastQuery;
@@ -36,6 +38,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _homeFuture = ProductService.fetchHomeCollections();
     _recentFuture =
         RecommendationService.getUserRecommendations(widget.userId);
+
+    // ✅ Load trending products
+    _trendingFuture =
+        RecommendationService.getTrendingByCategory(topNPerCategory: 3);
   }
 
   // --------------------------------------------------
@@ -50,78 +56,63 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --------------------------------------------------
-  // OPEN PRODUCT (✅ FINAL)
+  // OPEN PRODUCT
   // --------------------------------------------------
   void _openProduct(
-  String productId, {
-  bool fromSearch = false,
-  bool fromSimilar = false,
-}) {
-  setState(() {
-    if (_viewState != HomeViewState.detail) {
-      _previousViewState = _viewState;
-    }
-    _productHistory.add(productId);
-    _viewState = HomeViewState.detail;
-  });
+    String productId, {
+    bool fromSearch = false,
+    bool fromSimilar = false,
+  }) {
+    setState(() {
+      if (_viewState != HomeViewState.detail) {
+        _previousViewState = _viewState;
+      }
+      _productHistory.add(productId);
+      _viewState = HomeViewState.detail;
+    });
 
-  if (fromSearch) {
-    RecommendationService.logSearchView(
-      userId: widget.userId,
-      productId: productId,
-    );
-  } else if (fromSimilar) {
-    RecommendationService.logInteraction(
-      userId: widget.userId,
-      productId: productId,
-      eventType: "similar_view",
-      source: "similar_products",
-    );
-  } else {
-    RecommendationService.logView(
-      userId: widget.userId,
-      productId: productId,
-    );
+    if (fromSearch) {
+      RecommendationService.logSearchView(
+        userId: widget.userId,
+        productId: productId,
+      );
+    } else if (fromSimilar) {
+      RecommendationService.logInteraction(
+        userId: widget.userId,
+        productId: productId,
+        eventType: "similar_view",
+        source: "similar_products",
+      );
+    } else {
+      RecommendationService.logView(
+        userId: widget.userId,
+        productId: productId,
+      );
+    }
   }
-}
+
   // --------------------------------------------------
   // BACK HANDLING
   // --------------------------------------------------
-void _handleBack() {
-  setState(() {
-    _lastViewState = _viewState;
-
-    if (_viewState == HomeViewState.detail) {
-      _productHistory.removeLast();
-
-      if (_productHistory.isEmpty) {
-        _viewState = _previousViewState ?? HomeViewState.home;
-
-        // ✅ REFRESH RECOMMENDATIONS WHEN BACK TO HOME
-        if (_viewState == HomeViewState.home) {
+  void _handleBack() {
+    setState(() {
+      if (_viewState == HomeViewState.detail) {
+        _productHistory.removeLast();
+        if (_productHistory.isEmpty) {
+          _viewState = _previousViewState ?? HomeViewState.home;
           _recentFuture =
               RecommendationService.getUserRecommendations(widget.userId);
         }
+      } else if (_viewState == HomeViewState.results) {
+        _viewState = HomeViewState.home;
+        _searchFuture = null;
+        _lastQuery = null;
+        _recentFuture =
+            RecommendationService.getUserRecommendations(widget.userId);
       }
-      return;
-    }
+    });
+  }
 
-    if (_viewState == HomeViewState.results) {
-      _viewState = HomeViewState.home;
-
-      _searchFuture = null;
-      _lastQuery = null;
-
-      // ✅ REFRESH RECOMMENDATIONS
-      _recentFuture =
-          RecommendationService.getUserRecommendations(widget.userId);
-    }
-  });
-}
-
-  // --------------------------------------------------
-  // LOGOUT
-  // --------------------------------------------------
   void _logout(BuildContext context) {
     Navigator.pushAndRemoveUntil(
       context,
@@ -129,6 +120,7 @@ void _handleBack() {
       (_) => false,
     );
   }
+
 
   // --------------------------------------------------
   // UI
@@ -150,10 +142,6 @@ void _handleBack() {
       ),
     );
   }
-
-  // --------------------------------------------------
-  // HEADER
-  // --------------------------------------------------
   Widget _buildHeader() {
     return Container(
       height: 60,
@@ -184,18 +172,15 @@ void _handleBack() {
       ),
     );
   }
-
   // --------------------------------------------------
   // BODY SWITCH
   // --------------------------------------------------
   Widget _buildBody() {
     switch (_viewState) {
       case HomeViewState.home:
-        return _buildHomeCollections();
-
+        return _buildHome();
       case HomeViewState.results:
         return _buildSearchResults();
-
       case HomeViewState.detail:
         return ProductDetailView(
           productId: _productHistory.last,
@@ -205,15 +190,20 @@ void _handleBack() {
   }
 
   // --------------------------------------------------
-  // HOME COLLECTIONS + RECENT
+  // HOME VIEW
   // --------------------------------------------------
-  Widget _buildHomeCollections() {
+  Widget _buildHome() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           _buildRecentlySearchedSection(),
           const SizedBox(height: 24),
+
+          // ✅ NEW: Trending in every category
+          _buildTrendingCategories(),
+          const SizedBox(height: 32),
+
           FutureBuilder<HomeCollections>(
             future: _homeFuture,
             builder: (context, snapshot) {
@@ -237,7 +227,36 @@ void _handleBack() {
   }
 
   // --------------------------------------------------
-  // SEARCH RESULTS (✅ search_view)
+  // ✅ TRENDING PER CATEGORY UI
+  // --------------------------------------------------
+ // --------------------------------------------------
+// ✅ TRENDING PER CATEGORY UI
+// --------------------------------------------------
+Widget _buildTrendingCategories() {
+  return FutureBuilder<Map<String, List<Product>>>(
+    future: _trendingFuture,
+    builder: (context, snapshot) {
+      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+        return const SizedBox.shrink();
+      }
+
+      final trendingMap = snapshot.data!;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: trendingMap.entries.map((entry) {
+          return _buildSection(
+            "Trending in ${entry.key}",
+            entry.value,
+          );
+        }).toList(),
+      );
+    },
+  );
+}
+
+  // --------------------------------------------------
+  // SEARCH RESULTS
   // --------------------------------------------------
   Widget _buildSearchResults() {
     return FutureBuilder<List<Product>>(
@@ -274,7 +293,7 @@ void _handleBack() {
   }
 
   // --------------------------------------------------
-  // RECENTLY SEARCHED (✅ view)
+  // RECENTLY SEARCHED
   // --------------------------------------------------
   Widget _buildRecentlySearchedSection() {
     return FutureBuilder<List<Product>>(
@@ -289,7 +308,7 @@ void _handleBack() {
   }
 
   // --------------------------------------------------
-  // SECTION BUILDER (✅ view)
+  // SECTION BUILDER
   // --------------------------------------------------
   Widget _buildSection(String title, List<Product> products) {
     const double cardWidth = 180;
@@ -323,89 +342,88 @@ void _handleBack() {
   }
 
   // --------------------------------------------------
-  // PRODUCT CARD (UI‑ONLY)
+  // PRODUCT CARD
   // --------------------------------------------------
   Widget _buildProductCard(Product product) {
-  final sellingPrice = product.price?['selling'];
-  final imageUrl = product.images.isNotEmpty
-      ? "http://localhost:8000/image-proxy?url=${Uri.encodeComponent(product.images.first)}"
-      : null;
+    final sellingPrice = product.price?['selling'];
+    final imageUrl = product.images.isNotEmpty
+        ? "http://localhost:8000/image-proxy?url=${Uri.encodeComponent(product.images.first)}"
+        : null;
 
-  return Material(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(16),
-    elevation: 1.5,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 110,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: imageUrl != null
-                  ? Image.network(imageUrl, fit: BoxFit.contain)
-                  : const Icon(Icons.image),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            product.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            product.brand ?? "",
-            style:
-                TextStyle(fontSize: 12, color: Colors.grey.shade700),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              if (sellingPrice != null)
-                Text(
-                  "₹$sellingPrice",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          CopilotChatView(productId: product.pid),
-                    ),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.blue,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Icon(
-                    Icons.auto_awesome,
-                    size: 14,
-                    color: Colors.white,
-                  ),
-                ),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      elevation: 1.5,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 110,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
-          ),
-        ],
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: imageUrl != null
+                    ? Image.network(imageUrl, fit: BoxFit.contain)
+                    : const Icon(Icons.image),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              product.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              product.brand ?? "",
+              style:
+                  TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (sellingPrice != null)
+                  Text(
+                    "₹$sellingPrice",
+                    style:
+                        const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            CopilotChatView(productId: product.pid),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple
 import math
 from collections import defaultdict
@@ -6,6 +6,10 @@ from collections import defaultdict
 # ✅ IMPORT EXISTING COLLECTION
 from database import product_view_events,products_collection
 
+def ensure_utc(ts: datetime) -> datetime:
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts
 # =================================================
 # CONFIGURATION
 # =================================================
@@ -13,7 +17,7 @@ from database import product_view_events,products_collection
 EVENT_WEIGHTS = {
     "view": 1.0,               # normal product view
     "search_view": 2.5,        # strong intent
-    "similar view": 1.8        # Medium signal
+    "similar_view": 1.8        # Medium signal
 }
 
 # Higher value = recent days matter more
@@ -89,71 +93,74 @@ def extract_category(product: dict) -> str | None:
         or category.get("level_1")
     )
 
-def get_trending_categories(
-    top_k_categories: int = 5,
-    category_level: str = "category_l2"
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+import math
+
+
+def get_trending_products_per_category_dynamic(
+    top_n_per_category: int = 3,
+    lookback_days: int = 7,
+    consensus_ratio: float = 0.3,
 ):
-    print("🟡 STEP 0: ENTER get_trending_categories")
+    now = datetime.now(timezone.utc)
+    lookback_cutoff = now - timedelta(days=lookback_days)
 
-    from collections import defaultdict
     product_scores = defaultdict(float)
-    has_strong_event = defaultdict(bool)
+    product_users = defaultdict(set)
+    active_users = set()
 
-    cursor = list(product_view_events.find({}))
-    print(f"🟡 STEP 1: total events found = {len(cursor)}")
+    cursor = product_view_events.find({
+        "event_type": {"$in": ["view", "search_view", "similar_view"]},
+        "timestamp": {"$gte": lookback_cutoff}
+    })
 
     for doc in cursor:
         pid = doc.get("product_id")
+        uid = doc.get("user_id")
         event_type = doc.get("event_type")
         ts = doc.get("timestamp")
 
-        print(f"  ▶ EVENT: pid={pid}, type={event_type}")
-
-        if not pid or not event_type or not ts:
+        if not pid or not uid or not ts:
             continue
 
-        if event_type in ("view", "search_view"):
-            has_strong_event[pid] = True
+        # ✅ FIX: normalize timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
 
-        weight = EVENT_WEIGHTS.get(event_type, 0)
-        score = weight * _time_decay(ts)
-        product_scores[pid] += score
+        weight = EVENT_WEIGHTS.get(event_type)
+        if not weight:
+            continue
 
-    print(f"🟡 STEP 2: product_scores = {dict(product_scores)}")
-    print(f"🟡 STEP 2: has_strong_event = {dict(has_strong_event)}")
+        active_users.add(uid)
+        product_users[pid].add(uid)
 
-    if not product_scores:
-        print("🔴 EXIT: No product scores")
+        age_days = max((now - ts).days, 0)
+        decay = math.exp(-TIME_DECAY_LAMBDA * age_days)
+
+        product_scores[pid] += weight * decay
+
+    if not active_users or not product_scores:
         return {}
 
-    any_strong_exists = any(has_strong_event.values())
-    print(f"🟡 STEP 3: any_strong_exists = {any_strong_exists}")
+    # ✅ dynamic consensus
+    min_users = max(2, math.ceil(len(active_users) * consensus_ratio))
 
-    if any_strong_exists:
-        visible_products = {
-            pid: score
-            for pid, score in product_scores.items()
-            if has_strong_event.get(pid)
-        }
-    else:
-        visible_products = product_scores
+    eligible_products = {
+        pid: score
+        for pid, score in product_scores.items()
+        if len(product_users[pid]) >= min_users
+    }
 
-    print(f"🟡 STEP 4: visible_products = {visible_products}")
-
-    if not visible_products:
-        print("🔴 EXIT: visible_products empty")
+    if not eligible_products:
         return {}
 
-    product_docs = list(
-        products_collection.find(
-            {"pid": {"$in": list(visible_products.keys())}},
-            {"pid": 1, "category": 1}
-        )
+    product_docs = products_collection.find(
+        {"pid": {"$in": list(eligible_products.keys())}},
+        {"pid": 1, "category": 1}
     )
 
-    print(f"🟡 STEP 5: product_docs = {len(product_docs)}")
-
-    category_top_product = {}
+    category_to_products = defaultdict(list)
 
     for p in product_docs:
         pid = p.get("pid")
@@ -165,39 +172,20 @@ def get_trending_categories(
             or category_obj.get("level_1")
         )
 
-        print(f"  ▶ PRODUCT: pid={pid}, category={category}")
-
         if not category:
             continue
 
-        score = visible_products.get(pid, 0)
+        category_to_products[category].append(
+            (pid, eligible_products[pid])
+        )
 
-        if (
-            category not in category_top_product
-            or score > category_top_product[category][1]
-        ):
-            category_top_product[category] = (pid, score)
+    result = {}
+    for category, products in category_to_products.items():
+        products.sort(key=lambda x: x[1], reverse=True)
+        result[category] = [
+            pid for pid, _ in products[:top_n_per_category]
+        ]
 
-    print(f"🟡 STEP 6: category_top_product = {category_top_product}")
-
-    if not category_top_product:
-        print("🔴 EXIT: No category mapping")
-        return {}
-
-    ranked = sorted(
-        category_top_product.items(),
-        key=lambda x: x[1][1],
-        reverse=True
-    )
-
-    print(f"🟢 STEP 7: ranked categories = {ranked}")
-
-    result = {
-        category: [pid]
-        for category, (pid, _) in ranked[:top_k_categories]
-    }
-
-    print(f"✅ FINAL RESULT = {result}")
     return result
 
 

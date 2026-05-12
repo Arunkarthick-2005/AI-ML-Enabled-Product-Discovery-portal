@@ -26,7 +26,7 @@ from pymongo.errors import PyMongoError
 from llama_cpp import Llama         
 from utils.recommendation_engine import (
     log_product_event,
-    get_trending_categories,
+    get_trending_products_per_category_dynamic,
     get_user_recommendations
 )
 from pydantic import BaseModel
@@ -528,38 +528,39 @@ def search_products(
 
 
 
+
 @app.get("/products/trending-by-category")
-def trending_by_category(
-    top_k: int = 5,
-    category_level: str = "category_l2"
-):
+def trending_by_category(top_n_per_category: int = 3):
     """
-    Returns top K trending categories with their top product.
+    Returns top-N trending products for every category
+    using dynamic consensus logic.
     """
+
     try:
-        category_map = get_trending_categories(
-            top_k_categories=top_k,
-            category_level=category_level
+        # ✅ Call the dynamic consensus algorithm
+        category_map = get_trending_products_per_category_dynamic(
+            top_n_per_category=top_n_per_category
         )
 
         if not category_map:
             return {}
 
+        # ✅ Flatten product ids
         product_ids = [
             pid
             for pids in category_map.values()
             for pid in pids
         ]
 
-        products = list(
-            products_collection.find(
-                {"pid": {"$in": product_ids}},
-                {"_id": 0}
-            )
+        # ✅ Fetch product documents
+        products = products_collection.find(
+            {"pid": {"$in": product_ids}},
+            {"_id": 0}
         )
 
         product_map = {p["pid"]: p for p in products}
 
+        # ✅ Build response: category → products[]
         response = {}
         for category, pids in category_map.items():
             response[category] = [

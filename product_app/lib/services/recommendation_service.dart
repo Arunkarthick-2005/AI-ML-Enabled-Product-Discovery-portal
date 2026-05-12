@@ -11,7 +11,7 @@ class RecommendationService {
   static Future<void> logInteraction({
     required String userId,
     required String productId,
-    required String eventType, // view | search_view
+    required String eventType, // view | search_view | similar_view
     String source = "unknown",
   }) async {
     await http.post(
@@ -42,7 +42,7 @@ class RecommendationService {
   }
 
   // =================================================
-  // SEARCH RESULT CLICK (✅ NEW)
+  // SEARCH RESULT CLICK
   // =================================================
   static Future<void> logSearchView({
     required String userId,
@@ -60,7 +60,8 @@ class RecommendationService {
   // USER-SPECIFIC RECOMMENDATIONS
   // =================================================
   static Future<List<Product>> getUserRecommendations(
-      String userId) async {
+    String userId,
+  ) async {
     final response = await http.get(
       Uri.parse("$baseUrl/recommendations/user/$userId"),
     );
@@ -69,5 +70,34 @@ class RecommendationService {
 
     final List data = jsonDecode(response.body);
     return data.map((e) => Product.fromJson(e)).toList();
+  }
+
+  // =================================================
+  // ✅ TRENDING PRODUCTS PER CATEGORY (DYNAMIC)
+  // =================================================
+  static Future<Map<String, List<Product>>> getTrendingByCategory({
+    int topNPerCategory = 3,
+  }) async {
+    final response = await http.get(
+      Uri.parse(
+        "$baseUrl/products/trending-by-category"
+        "?top_n_per_category=$topNPerCategory",
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      return {};
+    }
+
+    final Map<String, dynamic> data = jsonDecode(response.body);
+
+    return data.map(
+      (category, products) => MapEntry(
+        category,
+        (products as List)
+            .map((p) => Product.fromJson(p))
+            .toList(),
+      ),
+    );
   }
 }
