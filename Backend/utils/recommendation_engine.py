@@ -60,44 +60,6 @@ def _time_decay(timestamp: datetime) -> float:
     age_days = max((now - timestamp).days, 0)
     return math.exp(-TIME_DECAY_LAMBDA * age_days)
 
-
-def _compute_scores(cursor) -> Dict[str, float]:
-    scores: Dict[str, float] = {}
-
-    for doc in cursor:
-        product_id = doc.get("product_id")
-        event_type = doc.get("event_type")
-        timestamp = doc.get("timestamp")
-
-        if not product_id or not event_type or not timestamp:
-            continue
-
-        base_weight = EVENT_WEIGHTS.get(event_type)
-        if not base_weight:
-            continue
-
-        score = base_weight * _time_decay(timestamp)
-        scores[product_id] = scores.get(product_id, 0.0) + score
-
-    return scores
-def extract_category(product: dict) -> str | None:
-    """
-    Returns the most specific available category.
-    Priority: level_3 > level_2 > level_1
-    """
-    category = product.get("category") or {}
-
-    return (
-        category.get("level_3")
-        or category.get("level_2")
-        or category.get("level_1")
-    )
-
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-import math
-
-
 def get_trending_products_per_category_dynamic(
     top_n_per_category: int = 3,
     lookback_days: int = 7,
@@ -201,9 +163,6 @@ def get_user_recommendations(
     # Track strong-view products
     strong_products = set()
 
-    # Track impression-only products
-    impression_products = set()
-
     cursor = product_view_events.find({
         "user_id": user_id.lower()
     })
@@ -220,8 +179,6 @@ def get_user_recommendations(
         if event_type in ("view", "search_view","similar_view"):
             has_any_strong_event = True
             strong_products.add(pid)
-        elif event_type == "search_impression":
-            impression_products.add(pid)
 
         # Scoring (always include all events)
         base_weight = EVENT_WEIGHTS.get(event_type)
@@ -241,13 +198,6 @@ def get_user_recommendations(
             pid: score
             for pid, score in scores.items()
             if pid in strong_products
-        }
-    else:
-        # No views yet → show impression products
-        visible_scores = {
-            pid: score
-            for pid, score in scores.items()
-            if pid in impression_products
         }
 
     if not visible_scores:

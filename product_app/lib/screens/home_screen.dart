@@ -215,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> {
               return Column(
                 children: [
                   _buildSection("Electronics", data.forElectronics),
-                  _buildSection("Furniture", data.forFurniture),
+                  _buildSection("Home & Living", data.forFurniture),
                   _buildSection("Clothing", data.forClothings),
                 ],
               );
@@ -226,9 +226,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --------------------------------------------------
-  // ✅ TRENDING PER CATEGORY UI
-  // --------------------------------------------------
  // --------------------------------------------------
 // ✅ TRENDING PER CATEGORY UI
 // --------------------------------------------------
@@ -302,7 +299,7 @@ Widget _buildTrendingCategories() {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const SizedBox.shrink();
         }
-        return _buildSection("Recently Searched", snapshot.data!);
+        return _buildSection("Recently Visited", snapshot.data!);
       },
     );
   }
