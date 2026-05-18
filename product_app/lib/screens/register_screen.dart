@@ -24,6 +24,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+
+      // ✅ BLUE BAR WITH ONLY BACK BUTTON
+      appBar: AppBar(
+        backgroundColor: Colors.blue,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -31,16 +42,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               const SizedBox(height: 40),
 
-              // 📝 Title
+              // ✅ KEEP YOUR ORIGINAL TITLE (unchanged)
               const Text(
                 "Create Account",
                 style: TextStyle(
-                  color : Colors.blue,
+                  color: Colors.blue,
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
                 ),
               ),
+
               const SizedBox(height: 8),
+
+              // ✅ KEEP YOUR SUBTITLE (unchanged)
               Text(
                 "Sign up to get started",
                 style: TextStyle(
@@ -51,7 +65,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
               const SizedBox(height: 32),
 
-              // 📦 Registration Card
+              // 📦 Registration Card (UNCHANGED)
               Center(
                 child: Card(
                   elevation: 6,
@@ -64,6 +78,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       key: _formKey,
                       child: Column(
                         children: [
+
                           // 👤 Name
                           SizedBox(
                             width: fieldWidth,
@@ -165,7 +180,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                           const SizedBox(height: 24),
 
-                          // 🔘 Register Button
+                          // 🔘 Register Button (UNCHANGED)
                           SizedBox(
                             width: fieldWidth,
                             height: 44,
@@ -181,49 +196,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               onPressed: loading
                                   ? null
                                   : () async {
-                                      if (_formKey.currentState!.validate()) {
-                                        setState(() => loading = true);
+                                if (_formKey.currentState!.validate()) {
+                                  setState(() => loading = true);
 
-                                        final error =
-                                            await AuthService.register(
-                                          nameController.text.trim(),
-                                          emailController.text.trim(),
-                                          mobileController.text.trim(),
-                                          passwordController.text.trim(),
-                                        );
+                                  final error =
+                                  await AuthService.register(
+                                    nameController.text.trim(),
+                                    emailController.text.trim(),
+                                    mobileController.text.trim(),
+                                    passwordController.text.trim(),
+                                  );
 
-                                        setState(() => loading = false);
+                                  setState(() => loading = false);
 
-                                        if (error == null) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                  "Registration successful"),
-                                            ),
-                                          );
-                                          Navigator.pop(context);
-                                        } else {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(content: Text(error)),
-                                          );
-                                        }
-                                      }
-                                    },
+                                  if (error == null) {
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            "Registration successful"),
+                                      ),
+                                    );
+                                    Navigator.pop(context);
+                                  } else {
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(
+                                      SnackBar(content: Text(error)),
+                                    );
+                                  }
+                                }
+                              },
                               child: loading
                                   ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
                                   : const Text(
-                                      "Create Account",
-                                      style: TextStyle(fontSize: 15),
-                                    ),
+                                "Create Account",
+                                style: TextStyle(fontSize: 15),
+                              ),
                             ),
                           ),
                         ],

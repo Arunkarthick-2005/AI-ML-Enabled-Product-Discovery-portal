@@ -58,8 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // --------------------------------------------------
   // OPEN PRODUCT
   // --------------------------------------------------
-  void _openProduct(
-    String productId, {
+  void _openProduct(String productId, {
     bool fromSearch = false,
     bool fromSimilar = false,
   }) {
@@ -98,17 +97,38 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       if (_viewState == HomeViewState.detail) {
         _productHistory.removeLast();
+
         if (_productHistory.isEmpty) {
           _viewState = _previousViewState ?? HomeViewState.home;
-          _recentFuture =
-              RecommendationService.getUserRecommendations(widget.userId);
+
+          if (_viewState == HomeViewState.home) {
+            // ✅ REFRESH BOTH
+            _recentFuture =
+                RecommendationService.getUserRecommendations(widget.userId);
+
+            _trendingFuture =
+                RecommendationService.getTrendingByCategory(
+                  topNPerCategory: 3,
+                );
+          }
         }
-      } else if (_viewState == HomeViewState.results) {
+        return;
+      }
+
+      if (_viewState == HomeViewState.results) {
         _viewState = HomeViewState.home;
+
         _searchFuture = null;
         _lastQuery = null;
+
+        // ✅ REFRESH BOTH
         _recentFuture =
             RecommendationService.getUserRecommendations(widget.userId);
+
+        _trendingFuture =
+            RecommendationService.getTrendingByCategory(
+              topNPerCategory: 3,
+            );
       }
     });
   }
@@ -117,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (_) => false,
+          (_) => false,
     );
   }
 
@@ -129,19 +149,23 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Column(
-        children: [
-          _buildHeader(),
-          if (_viewState != HomeViewState.detail)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SearchBarWidget(onSearch: _onSearch),
-            ),
-          Expanded(child: _buildBody()),
-        ],
+      body: SafeArea( // ✅ FIXED
+        child: Column(
+          children: [
+            _buildHeader(),
+            if (_viewState != HomeViewState.detail)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SearchBarWidget(onSearch: _onSearch),
+              ),
+            Expanded(child: _buildBody()),
+          ],
+        ),
       ),
     );
   }
+
+
   Widget _buildHeader() {
     return Container(
       height: 60,
@@ -172,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
   // --------------------------------------------------
   // BODY SWITCH
   // --------------------------------------------------
@@ -226,31 +251,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
- // --------------------------------------------------
+  // --------------------------------------------------
 // ✅ TRENDING PER CATEGORY UI
 // --------------------------------------------------
-Widget _buildTrendingCategories() {
-  return FutureBuilder<Map<String, List<Product>>>(
-    future: _trendingFuture,
-    builder: (context, snapshot) {
-      if (!snapshot.hasData || snapshot.data!.isEmpty) {
-        return const SizedBox.shrink();
-      }
+  Widget _buildTrendingCategories() {
+    return FutureBuilder<Map<String, List<Product>>>(
+      future: _trendingFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const SizedBox.shrink();
+        }
 
-      final trendingMap = snapshot.data!;
+        final trendingMap = snapshot.data!;
 
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: trendingMap.entries.map((entry) {
-          return _buildSection(
-            "Trending in ${entry.key}",
-            entry.value,
-          );
-        }).toList(),
-      );
-    },
-  );
-}
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: trendingMap.entries.map((entry) {
+            return _buildSection(
+              "Trending in ${entry.key}",
+              entry.value,
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
 
   // --------------------------------------------------
   // SEARCH RESULTS
@@ -272,18 +297,20 @@ Widget _buildTrendingCategories() {
           padding: const EdgeInsets.all(16),
           itemCount: products.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 7,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: 0.70,
+            crossAxisCount: 2, // ✅ FIXED (2 per row)
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 0.85, // ✅ better mobile ratio
           ),
-          itemBuilder: (_, i) => InkWell(
-            onTap: () => _openProduct(
-              products[i].pid,
-              fromSearch: true,
-            ),
-            child: _buildProductCard(products[i]),
-          ),
+          itemBuilder: (_, i) =>
+              InkWell(
+                onTap: () =>
+                    _openProduct(
+                      products[i].pid,
+                      fromSearch: true,
+                    ),
+                child: _buildProductCard(products[i]),
+              ),
         );
       },
     );
@@ -316,7 +343,7 @@ Widget _buildTrendingCategories() {
       children: [
         Text(title,
             style:
-                const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         const SizedBox(height: 12),
         SizedBox(
           height: cardHeight,
@@ -324,13 +351,14 @@ Widget _buildTrendingCategories() {
             scrollDirection: Axis.horizontal,
             itemCount: products.length,
             separatorBuilder: (_, __) => const SizedBox(width: 16),
-            itemBuilder: (_, index) => InkWell(
-              onTap: () => _openProduct(products[index].pid),
-              child: SizedBox(
-                width: cardWidth,
-                child: _buildProductCard(products[index]),
-              ),
-            ),
+            itemBuilder: (_, index) =>
+                InkWell(
+                  onTap: () => _openProduct(products[index].pid),
+                  child: SizedBox(
+                    width: cardWidth,
+                    child: _buildProductCard(products[index]),
+                  ),
+                ),
           ),
         ),
         const SizedBox(height: 24),
@@ -343,77 +371,89 @@ Widget _buildTrendingCategories() {
   // --------------------------------------------------
   Widget _buildProductCard(Product product) {
     final sellingPrice = product.price?['selling'];
+
     final imageUrl = product.images.isNotEmpty
-        ? "http://localhost:8000/image-proxy?url=${Uri.encodeComponent(product.images.first)}"
+        ? "http://10.0.2.2:8000/image-proxy?url=${Uri.encodeComponent(
+        product.images.first)}"
         : null;
 
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 1.5,
+      borderRadius: BorderRadius.circular(12),
+      elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(6), // ✅ reduced
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.max, // ✅ important
           children: [
-            Container(
+
+            // ✅ FIXED IMAGE HEIGHT (prevents stretch)
+            SizedBox(
               height: 110,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              width: double.infinity,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
                 child: imageUrl != null
-                    ? Image.network(imageUrl, fit: BoxFit.contain)
+                    ? Image.network(
+                  imageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.broken_image),
+                )
                     : const Icon(Icons.image),
               ),
             ),
-            const SizedBox(height: 8),
+
+            const SizedBox(height: 6),
+
+            // ✅ TITLE
             Text(
               product.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),
+
+            const SizedBox(height: 2),
+
+            // ✅ BRAND
             Text(
               product.brand ?? "",
-              style:
-                  TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey.shade700,
+              ),
             ),
-            const SizedBox(height: 6),
+
+            const SizedBox(height: 4),
+
+            // ✅ PRICE + ICON
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 if (sellingPrice != null)
                   Text(
                     "₹$sellingPrice",
-                    style:
-                        const TextStyle(fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
                   ),
-                InkWell(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            CopilotChatView(productId: product.pid),
-                      ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Icon(
-                      Icons.auto_awesome,
-                      size: 14,
-                      color: Colors.white,
-                    ),
+
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome,
+                    size: 14,
+                    color: Colors.white,
                   ),
                 ),
               ],
