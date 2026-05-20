@@ -356,12 +356,32 @@ def register(user: UserRegister):
 
 @app.post("/auth/login")
 def login(user: UserLogin):
+
+    # ✅ ✅ ADMIN LOGIN CHECK
+    if user.email == "admin@gmail.com" and user.password == "Admin@123":
+        token = create_access_token({"sub": "admin"})
+
+        return {
+            "access_token": token,
+            "user_id": "admin",
+            "username": "Admin",
+            "role": "admin"
+        }
+
+    # ✅ ✅ NORMAL USER LOGIN
     db_user = users_collection.find_one({"email": user.email})
+
     if not db_user or not verify_password(user.password, db_user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": db_user["id"]})
-    return {"access_token": token, "user_id": db_user["id"]}
+
+    return {
+        "access_token": token,
+        "user_id": db_user["id"],
+        "username": db_user.get("name", ""),
+        "role": "user"
+    }
 
 
 # =================================================
@@ -989,6 +1009,120 @@ Product:
         "answer": answer,
         "sources": [product.get("title")]
     }
+
+@app.get("/admin/categories-tree")
+def get_categories():
+
+    data = list(
+        products_collection.find(
+            {},
+            {
+                "_id": 0,
+                "category.level_1": 1,
+                "category.level_2": 1,
+                "category.level_3": 1
+            }
+        )
+    )
+
+    tree = {}
+
+    for item in data:
+        cat = item.get("category", {})
+
+        l1 = cat.get("level_1")
+        l2 = cat.get("level_2")
+        l3 = cat.get("level_3")
+
+        if not l1:
+            continue
+
+        # ✅ LEVEL 1
+        if l1 not in tree:
+            tree[l1] = {}
+
+        # ✅ LEVEL 2
+        if l2:
+            if l2 not in tree[l1]:
+                tree[l1][l2] = {}
+
+            # ✅ LEVEL 3
+            if l3:
+                tree[l1][l2][l3] = {}
+        else:
+            # ✅ handle cases where only L1 exists
+            tree[l1] = tree[l1] or {}
+
+    # ✅ convert dict → tree recursively
+    def build_tree(node):
+        result = []
+        for key, value in node.items():
+            entry = {"name": key}
+
+            children = build_tree(value)
+            if children:
+                entry["children"] = children
+
+            result.append(entry)
+
+        return result
+
+    return build_tree(tree)
+
+
+
+
+@app.get("/admin/products-by-name")
+def products_by_name(name: str = Query(...)):
+
+    # ✅ escape special regex characters safely
+    safe_name = re.escape(name.strip())
+
+    # ✅ case-insensitive + partial match
+    regex = {"$regex": safe_name, "$options": "i"}
+
+    products = list(
+        products_collection.find(
+            {
+                "$or": [
+                    {"category.level_1": regex},
+                    {"category.level_2": regex},
+                    {"category.level_3": regex}
+                ]
+            },
+            {"_id": 0}
+        )
+    )
+
+    return products
+
+@app.delete("/admin/products/{pid}")
+def delete_product(pid: str):
+
+    result = products_collection.delete_one({"pid": pid})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return {"message": "Product deleted successfully"}
+
+@app.put("/admin/products/{pid}")
+def update_product(pid: str, product: dict):
+
+    update_data = {
+        key: value for key, value in product.items()
+        if key != "images"
+    }
+
+    result = products_collection.update_one(
+        {"pid": pid},
+        {"$set": update_data}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return {"message": "Product updated"}
 
 # =================================================
 # IMAGE PROXY

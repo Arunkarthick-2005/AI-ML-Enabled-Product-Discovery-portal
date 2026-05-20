@@ -123,4 +123,56 @@ class ProductService {
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((e) => Product.fromJson(e)).toList();
   }
+  static Future<List<Product>> getProductsByCategory(
+      String? l1,
+      String? l2,
+      String? l3,
+      ) async {
+    final response = await http.get(
+      Uri.parse(
+        "$baseUrl/admin/products-by-category"
+            "?l1=${l1 ?? ""}&l2=${l2 ?? ""}&l3=${l3 ?? ""}",
+      ),
+    );
+
+    if (response.statusCode != 200) return [];
+
+    final List data = jsonDecode(response.body);
+    return data.map((e) => Product.fromJson(e)).toList();
+  }
+  static Future<List<Product>> getProductsByCategoryName(
+      String categoryName,
+      ) async {
+    final response = await http.get(
+      Uri.parse("$baseUrl/admin/products-by-name?name=$categoryName"),
+    );
+
+    if (response.statusCode != 200) return [];
+
+    final List data = jsonDecode(response.body);
+
+    return data.map((e) => Product.fromJson(e)).toList();
+  }
+  // ✅ DELETE PRODUCT
+  static Future<bool> deleteProduct(String pid) async {
+    final response = await http.delete(
+      Uri.parse("$baseUrl/admin/products/$pid"),
+    );
+
+    return response.statusCode == 200;
+  }
+
+// ✅ UPDATE PRODUCT
+  static Future<bool> updateProduct({
+    required String pid,
+    required Map<String, dynamic> data,
+  }) async {
+    final response = await http.put(
+      Uri.parse("$baseUrl/admin/products/$pid"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode(data),
+    );
+
+    return response.statusCode == 200;
+  }
 }

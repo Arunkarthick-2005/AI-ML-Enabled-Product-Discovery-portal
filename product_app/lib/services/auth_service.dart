@@ -3,14 +3,16 @@ import 'package:http/http.dart' as http;
 
 /// ✅ Result object returned after successful login
 class AuthResult {
-  final String userId;   // ✅ REQUIRED for recommendations
+  final String userId;   // ✅ required for recommendations
   final String token;
   final String username;
+  final String role;     // ✅ NEW (admin / user)
 
   AuthResult({
     required this.userId,
     required this.token,
     required this.username,
+    required this.role,
   });
 }
 
@@ -21,11 +23,11 @@ class AuthService {
   // ✅ REGISTER (UNCHANGED)
   // -----------------------------
   static Future<String?> register(
-    String name,
-    String email,
-    String mobile,
-    String password,
-  ) async {
+      String name,
+      String email,
+      String mobile,
+      String password,
+      ) async {
     try {
       final response = await http.post(
         Uri.parse("$baseUrl/auth/register"),
@@ -51,12 +53,12 @@ class AuthService {
   }
 
   // -----------------------------
-  // ✅ LOGIN (FIXED FOR USER ID)
+  // ✅ LOGIN (UPDATED FOR ROLE)
   // -----------------------------
   static Future<AuthResult?> login(
-    String email,
-    String password,
-  ) async {
+      String email,
+      String password,
+      ) async {
     try {
       final response = await http.post(
         Uri.parse("$baseUrl/auth/login"),
@@ -72,9 +74,11 @@ class AuthService {
       final data = jsonDecode(response.body);
 
       final String? token = data["access_token"];
-      final String? userId = data["user_id"]; // ✅ UUID from backend
+      final String? userId = data["user_id"];
       final String username =
-          data["name"] ?? "User"; // display only
+          data["username"] ?? "User"; // ✅ FIXED KEY
+      final String role =
+          data["role"] ?? "user";     // ✅ NEW
 
       // ✅ STRICT VALIDATION
       if (token == null || userId == null) {
@@ -85,6 +89,7 @@ class AuthService {
         userId: userId,
         token: token,
         username: username,
+        role: role,
       );
     } catch (e) {
       print("LOGIN ERROR: $e");

@@ -287,6 +287,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
   );
 }
 
-  String _proxy(String url) =>
-      "http://localhost:8000/image-proxy?url=${Uri.encodeComponent(url)}";
+  String _proxy(String url) {
+    return "http://10.0.2.2:8000/image-proxy?url=${Uri.encodeComponent(url)}";
+  }
 }

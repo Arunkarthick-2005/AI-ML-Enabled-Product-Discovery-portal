@@ -4,6 +4,7 @@ import '../services/auth_service.dart';
 import 'home_screen.dart';
 import '../utils/user_session.dart';
 import 'register_screen.dart';
+import 'admin_home_screen.dart'; // ✅ NEW
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -96,55 +97,65 @@ class _LoginScreenState extends State<LoginScreen> {
                                   onPressed: loading
                                       ? null
                                       : () async {
-                                          setState(() => loading = true);
+                                    setState(() => loading = true);
 
-                                          final AuthResult? result =
-                                              await AuthService.login(
-                                            emailController.text.trim(),
-                                            passwordController.text.trim(),
-                                          );
+                                    final AuthResult? result =
+                                    await AuthService.login(
+                                      emailController.text.trim(),
+                                      passwordController.text.trim(),
+                                    );
 
-                                          setState(() => loading = false);
+                                    setState(() => loading = false);
 
-                                          if (result == null) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content:
-                                                    Text("Invalid credentials"),
-                                              ),
-                                            );
-                                            return;
-                                          }
+                                    if (result == null) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content:
+                                          Text("Invalid credentials"),
+                                        ),
+                                      );
+                                      return;
+                                    }
 
-                                          // ✅ STORE UUID GLOBALLY
-                                          UserSession.currentUserId =
-                                              result.userId;
+                                    // ✅ STORE USER ID
+                                    UserSession.currentUserId =
+                                        result.userId;
 
-                                          // ✅ NAVIGATE USING UUID
-                                          Navigator.pushReplacement(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => HomeScreen(
-                                                userId: result.userId,
-                                                username: result.username,
-                                              ),
-                                            ),
-                                          );
-                                        },
+                                    // ✅ ✅ ROLE-BASED NAVIGATION (IMPORTANT)
+                                    if (result.role == "admin") {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                          const AdminHomeScreen(),
+                                        ),
+                                      );
+                                    } else {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => HomeScreen(
+                                            userId: result.userId,
+                                            username: result.username,
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
                                   child: loading
                                       ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                       : const Text(
-                                          "Login",
-                                          style: TextStyle(fontSize: 16),
-                                        ),
+                                    "Login",
+                                    style: TextStyle(fontSize: 16),
+                                  ),
                                 ),
                               ),
                             ],
