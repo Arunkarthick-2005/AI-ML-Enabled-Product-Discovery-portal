@@ -12,6 +12,8 @@ from typing import Set
 import traceback
 import requests
 from typing import List
+import csv
+from fastapi import UploadFile, File
 from utils.retriever import retrieve_for_rag
 from utils.context_builder import build_product_context
 from utils.prompt import build_prompt
@@ -57,6 +59,18 @@ class CopilotResponse(BaseModel):
 class RecommendationRequest(BaseModel):
     query: str
     exclude_pids: List[str] = []
+
+class ProductCreateRequest(BaseModel):
+    title: str
+    brand: Optional[str] = ""
+    description: Optional[str] = ""
+    
+    price: dict
+    category: dict
+
+    images: List[str]
+
+    specifications: Optional[List[dict]] = []
 
 # =================================================
 # HOME COLLECTION PROJECTION
@@ -140,6 +154,15 @@ def normalize_dict(value):
         except Exception:
             return {}
     return {}
+
+def safe_text(value):
+    return value if isinstance(value, str) else ""
+
+def safe_meta_str(value):
+    return value.lower() if isinstance(value, str) else ""
+
+def safe_meta_int(value):
+    return value if isinstance(value, (int, float)) else 0
 
 
 def normalize_list(value):
@@ -390,7 +413,7 @@ def login(user: UserLogin):
 @app.get("/products/search", response_model=List[Product])
 def search_products(
     q: str = Query(..., min_length=1),
-    top_k: int = 30
+    top_k: int = 80
 ):
     # ------------------------------------------------
     # 1. Semantic Recall (Candidate Generation)
@@ -1010,6 +1033,262 @@ Product:
         "sources": [product.get("title")]
     }
 
+@app.get("/products/{pid}/alternatives", response_model=List[Product])
+def get_next_best_alternatives(
+    pid: str,
+    query: str = "",
+    limit: int = 5
+):
+    """
+    Final Version:
+    ✅ Dual similarity (product + query)
+    ✅ Intent-aware pricing (FIXED)
+    ✅ Proper fallback (no query → product only)
+    ✅ Safe embedding handling
+    ✅ Optimized DB calls
+    ✅ Normalized output
+    """
+
+    # -----------------------------------------------------
+    # ✅ 1. BASE PRODUCT
+    # -----------------------------------------------------
+    base_product = products_collection.find_one({"pid": pid})
+    if not base_product:
+        return []
+
+    base_price = base_product.get("price", {}).get("selling", 0)
+
+    base_category = (
+        base_product.get("category", {}).get("level_3") or
+        base_product.get("category", {}).get("level_2") or
+        base_product.get("category", {}).get("level_1")
+    )
+
+    # -----------------------------------------------------
+    # ✅ 2. INTENT DETECTION
+    # -----------------------------------------------------
+    query_lower = query.lower()
+    keywords = extract_keywords(query_lower)
+    brand_intent = detect_brand(query_lower, BRAND_INDEX)
+
+    is_price_intent = any(k in query_lower for k in ["cheap", "budget", "under", "low","less than"])
+    is_premium_intent = any(k in query_lower for k in ["best", "top", "premium","above","greater than"])
+
+    # -----------------------------------------------------
+    # ✅ 3. DYNAMIC WEIGHTS (FIXED)
+    # -----------------------------------------------------
+    weights = {
+        "similarity": 0.4,
+        "price": 0.2,
+        "brand": 0.2,
+        "spec": 0.2
+    }
+
+    if is_price_intent:
+        weights["price"] = 0.5
+        weights["similarity"] = 0.3
+
+    elif is_premium_intent:
+        weights["price"] = 0.1   # ✅ reduce price effect
+        weights["similarity"] = 0.5
+        weights["spec"] = 0.4
+
+    if brand_intent:
+        weights["brand"] += 0.3
+
+    total = sum(weights.values())
+    weights = {k: v / total for k, v in weights.items()}
+
+    # -----------------------------------------------------
+    # ✅ 4. BASE EMBEDDING (SAFE)
+    # -----------------------------------------------------
+    base_result = chroma_collection.get(
+        where={"pid": pid},
+        include=["embeddings"]
+    )
+
+    if (
+        base_result is None or
+        "embeddings" not in base_result or
+        base_result["embeddings"] is None or
+        len(base_result["embeddings"]) == 0 or
+        base_result["embeddings"][0] is None
+    ):
+        return []
+
+    base_embedding = np.array(base_result["embeddings"][0])
+
+    # -----------------------------------------------------
+    # ✅ 5. QUERY EMBEDDING (OPTIONAL)
+    # -----------------------------------------------------
+    query_embedding = None
+    if query.strip():
+        query_embedding = np.array(
+            embedding_model.encode(query, normalize_embeddings=True)
+        )
+
+    # -----------------------------------------------------
+    # ✅ 6. RETRIEVE CANDIDATES
+    # -----------------------------------------------------
+    similar = chroma_collection.query(
+        query_embeddings=[base_embedding.tolist()],
+        n_results=20,
+        include=["metadatas", "distances", "embeddings"]
+    )
+
+    if (
+        similar is None or
+        "metadatas" not in similar or
+        similar["metadatas"] is None or
+        len(similar["metadatas"]) == 0
+    ):
+        return []
+
+    if (
+        "embeddings" not in similar or
+        similar["embeddings"] is None or
+        len(similar["embeddings"]) == 0
+    ):
+        return []
+
+    candidates = similar["metadatas"][0]
+    distances = similar.get("distances", [[]])[0]
+    candidate_embeddings = similar["embeddings"][0]
+
+    # -----------------------------------------------------
+    # ✅ 7. BATCH FETCH PRODUCTS
+    # -----------------------------------------------------
+    candidate_pids = [
+        meta.get("pid")
+        for meta in candidates
+        if meta.get("pid") and meta.get("pid") != pid
+    ]
+
+    products_data = list(
+        products_collection.find(
+            {"pid": {"$in": candidate_pids}},
+            {"_id": 0}
+        )
+    )
+
+    product_map = {p["pid"]: p for p in products_data}
+
+    scored_products = []
+
+    # -----------------------------------------------------
+    # ✅ 8. SCORING LOOP
+    # -----------------------------------------------------
+    for meta, dist, cand_emb in zip(candidates, distances, candidate_embeddings):
+
+        candidate_pid = meta.get("pid")
+        if not candidate_pid or candidate_pid == pid:
+            continue
+
+        product = product_map.get(candidate_pid)
+        if not product:
+            continue
+
+        # ✅ CATEGORY FILTER
+        category = (
+            product.get("category", {}).get("level_3") or
+            product.get("category", {}).get("level_2") or
+            product.get("category", {}).get("level_1")
+        )
+
+        if category != base_category:
+            continue
+
+        price = product.get("price", {}).get("selling", 0)
+        brand = (product.get("brand") or "").lower()
+        specs = product.get("specifications", {})
+
+        if price == 0:
+            continue
+
+        # -------------------------------------------------
+        # ✅ 9. DUAL SIMILARITY (WITH FALLBACK)
+        # -------------------------------------------------
+        sim_product = 1 / (1 + dist) if dist is not None else 0
+
+        if query_embedding is not None and cand_emb is not None:
+            cand_vec = np.array(cand_emb)
+            sim_query = float(np.dot(query_embedding, cand_vec))
+            final_similarity = 0.6 * sim_product + 0.4 * sim_query
+        else:
+            final_similarity = sim_product
+
+        # -------------------------------------------------
+        # ✅ 10. FIXED PRICE LOGIC (IMPORTANT ✅)
+        # -------------------------------------------------
+        if is_price_intent:
+            # ✅ prefer cheaper
+            price_score = max(0, (base_price - price) / base_price)
+        elif is_premium_intent:
+            # ✅ allow higher price products
+            price_score = (price - base_price) / base_price if base_price else 0
+        else:
+            # ✅ balanced
+            price_score = (base_price - price) / base_price if base_price else 0
+
+        # ✅ clamp values
+        price_score = max(-0.5, min(price_score, 0.5))
+
+        # -------------------------------------------------
+        # ✅ 11. BRAND + SPEC
+        # -------------------------------------------------
+        brand_score = 1 if (brand_intent and brand_intent in brand) else 0
+
+        normalized_specs = normalize_specifications(specs)
+        spec_text = specs_to_text(normalized_specs).lower() if normalized_specs else ""
+
+        spec_match_score = 0
+        for kw in keywords:
+            if kw in spec_text:
+                spec_match_score += 1
+
+        if keywords:
+            spec_match_score /= len(keywords)
+
+        # -------------------------------------------------
+        # ✅ 12. FINAL SCORE
+        # -------------------------------------------------
+        final_score = (
+            final_similarity * weights["similarity"] +
+            price_score * weights["price"] +
+            brand_score * weights["brand"] +
+            spec_match_score * weights["spec"]
+        )
+
+        scored_products.append((product, final_score))
+
+    if not scored_products:
+        return []
+
+    # -----------------------------------------------------
+    # ✅ SORT
+    # -----------------------------------------------------
+    scored_products.sort(key=lambda x: x[1], reverse=True)
+    top_products = [p for p, _ in scored_products[:limit]]
+
+    # -----------------------------------------------------
+    # ✅ NORMALIZATION
+    # -----------------------------------------------------
+    normalized_products = []
+
+    for p in top_products:
+        p["brand"] = normalize_string(p.get("brand"))
+        p["images"] = normalize_list(p.get("images"))
+        p["category"] = normalize_dict(p.get("category"))
+        p["price"] = normalize_dict(p.get("price"))
+        p["specifications"] = normalize_specifications(
+            p.get("specifications")
+        )
+
+        normalized_products.append(Product(**p))
+
+    return normalized_products
+
+
 @app.get("/admin/categories-tree")
 def get_categories():
 
@@ -1069,9 +1348,6 @@ def get_categories():
 
     return build_tree(tree)
 
-
-
-
 @app.get("/admin/products-by-name")
 def products_by_name(name: str = Query(...)):
 
@@ -1096,47 +1372,415 @@ def products_by_name(name: str = Query(...)):
 
     return products
 
+
+@app.post("/admin/products")
+def create_product(product: ProductCreateRequest):
+
+    try:
+
+        # ✅ GENERATE PID
+        pid = str(uuid.uuid4())
+
+        # ✅ NORMALIZE SPECIFICATIONS (SAME AS SCRIPT)
+        normalized_specs = normalize_specifications(
+            product.specifications
+        )
+
+        spec_text = specs_to_text(normalized_specs)
+
+        spec_kv_list = [
+            f"{s['key']}={s['value']}"
+            for s in normalized_specs.get("product_specification", [])
+            if s.get("key") and s.get("value")
+        ] if normalized_specs else None
+
+        # =====================================
+        # ✅ SAVE TO MONGODB
+        # =====================================
+        new_product = {
+            "pid": pid,
+            "title": product.title,
+            "brand": product.brand,
+            "description": product.description,
+
+            "images": product.images,
+
+            "price": {
+                "selling": product.price.get("selling", 0),
+                "retail": product.price.get("retail", 0),
+            },
+
+            "category": {
+                "level_1": product.category.get("level_1"),
+                "level_2": product.category.get("level_2"),
+                "level_3": product.category.get("level_3"),
+            },
+
+            "specifications": {
+                "product_specification": product.specifications or []
+            }
+        }
+
+        products_collection.insert_one(new_product)
+
+        # =====================================
+        # ✅ BUILD DOCUMENT (SAME AS SCRIPT)
+        # =====================================
+        document = " ".join(filter(None, [
+            safe_text(new_product.get("title")),
+            safe_text(new_product.get("brand")),
+            safe_text(new_product.get("description")),
+            safe_text(new_product["category"].get("level_1")),
+            safe_text(new_product["category"].get("level_2")),
+            safe_text(new_product["category"].get("level_3")),
+            spec_text
+        ])).strip()
+
+        # ✅ SAFETY CHECK
+        if not document:
+            return {"message": "Product created but skipped embedding"}
+
+        # =====================================
+        # ✅ CREATE EMBEDDING
+        # =====================================
+        embedding = embedding_model.encode(
+            document,
+            normalize_embeddings=True
+        ).tolist()
+
+        # =====================================
+        # ✅ METADATA (MATCH SCRIPT EXACTLY)
+        # =====================================
+        metadata = {
+            "pid": pid,
+            "title": safe_meta_str(new_product.get("title")),
+            "brand": safe_meta_str(new_product.get("brand")),
+            "description": safe_meta_str(new_product.get("description")),
+
+            "category_l1": safe_meta_str(new_product["category"].get("level_1")),
+            "category_l2": safe_meta_str(new_product["category"].get("level_2")),
+            "category_l3": safe_meta_str(new_product["category"].get("level_3")),
+
+            "price": safe_meta_int(new_product["price"].get("selling")),
+
+            "specifications": spec_kv_list  # ✅ MUST BE list[str]
+        }
+
+        # =====================================
+        # ✅ UPSERT INTO CHROMADB
+        # =====================================
+        chroma_collection.upsert(
+            ids=[pid],
+            documents=[document],
+            embeddings=[embedding],
+            metadatas=[metadata]
+        )
+
+        return {
+            "message": "Product created successfully",
+            "pid": pid
+        }
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/products/upload-csv")
+async def upload_products_csv(file: UploadFile = File(...)):
+
+    try:
+        contents = await file.read()
+        decoded = contents.decode("utf-8").splitlines()
+        reader = csv.DictReader(decoded)
+
+        inserted_count = 0
+        skipped_count = 0
+
+        for row in reader:
+
+            # =========================================
+            # ✅ SKIP NULL/INVALID ROWS
+            # =========================================
+            if (
+                not row.get("title") or
+                not row.get("price_selling") or
+                not row.get("category_l1")
+            ):
+                skipped_count += 1
+                continue
+
+            # =========================================
+            # ✅ GENERATE PID
+            # =========================================
+            pid = str(uuid.uuid4())
+
+            # =========================================
+            # ✅ IMAGE HANDLING (FIXED ✅)
+            # =========================================
+            raw_images = row.get("images")
+
+            if raw_images and isinstance(raw_images, str):
+                images = [
+                    img.strip()
+                    for img in raw_images.split(",")
+                    if img.strip()
+                ]
+            else:
+                images = []
+
+            # ✅ optional fallback (prevents UI crash)
+            if not images:
+                images = ["https://via.placeholder.com/150"]
+
+            # =========================================
+            # ✅ SPECIFICATIONS PARSE
+            # =========================================
+            specs_list = []
+
+            raw_specs = row.get("specifications", "")
+            for item in raw_specs.split(","):
+                if ":" in item:
+                    key, val = item.split(":", 1)
+                    specs_list.append({
+                        "key": key.strip(),
+                        "value": val.strip()
+                    })
+
+            normalized_specs = normalize_specifications({
+                "product_specification": specs_list
+            })
+
+            spec_text = specs_to_text(normalized_specs)
+
+            spec_kv_list = [
+                f"{s['key']}={s['value']}"
+                for s in normalized_specs.get("product_specification", [])
+                if s.get("key") and s.get("value")
+            ] if normalized_specs else None
+
+            # =========================================
+            # ✅ BUILD PRODUCT (MONGODB STRUCTURE ✅)
+            # =========================================
+            product_doc = {
+                "pid": pid,
+                "title": row.get("title"),
+                "brand": row.get("brand"),
+                "description": row.get("description"),
+
+                "images": images,
+
+                "price": {
+                    "selling": int(float(row.get("price_selling", 0))),
+                    "retail": int(float(
+                        row.get("price_retail", row.get("price_selling", 0))
+                    ))
+                },
+
+                "category": {
+                    "level_1": row.get("category_l1"),
+                    "level_2": row.get("category_l2"),
+                    "level_3": row.get("category_l3")
+                },
+
+                "specifications": {
+                    "product_specification": specs_list
+                }
+            }
+
+            # =========================================
+            # ✅ INSERT INTO MONGODB
+            # =========================================
+            products_collection.insert_one(product_doc)
+
+            # =========================================
+            # ✅ BUILD EMBEDDING DOCUMENT (MATCH SCRIPT ✅)
+            # =========================================
+            document = " ".join(filter(None, [
+                safe_text(product_doc.get("title")),
+                safe_text(product_doc.get("brand")),
+                safe_text(product_doc.get("description")),
+                safe_text(product_doc["category"].get("level_1")),
+                safe_text(product_doc["category"].get("level_2")),
+                safe_text(product_doc["category"].get("level_3")),
+                spec_text
+            ])).strip()
+
+            if not document:
+                continue
+
+            # =========================================
+            # ✅ CREATE EMBEDDING
+            # =========================================
+            embedding = embedding_model.encode(
+                document,
+                normalize_embeddings=True
+            ).tolist()
+
+            # =========================================
+            # ✅ METADATA (MATCH SCRIPT EXACTLY ✅)
+            # =========================================
+            metadata = {
+                "pid": pid,
+                "title": safe_meta_str(product_doc.get("title")),
+                "brand": safe_meta_str(product_doc.get("brand")),
+                "description": safe_meta_str(product_doc.get("description")),
+
+                "category_l1": safe_meta_str(product_doc["category"].get("level_1")),
+                "category_l2": safe_meta_str(product_doc["category"].get("level_2")),
+                "category_l3": safe_meta_str(product_doc["category"].get("level_3")),
+
+                "price": safe_meta_int(product_doc["price"].get("selling")),
+
+                "specifications": spec_kv_list
+            }
+
+            # =========================================
+            # ✅ UPSERT INTO CHROMADB ✅
+            # =========================================
+            chroma_collection.upsert(
+                ids=[pid],
+                documents=[document],
+                embeddings=[embedding],
+                metadatas=[metadata]
+            )
+
+            inserted_count += 1
+
+        return {
+            "message": "CSV upload completed successfully",
+            "inserted": inserted_count,
+            "skipped": skipped_count
+        }
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 @app.delete("/admin/products/{pid}")
 def delete_product(pid: str):
 
-    result = products_collection.delete_one({"pid": pid})
+    try:
+        # ✅ DELETE FROM MONGODB
+        result = products_collection.delete_one({"pid": pid})
 
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Product not found")
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Product not found")
 
-    return {"message": "Product deleted successfully"}
+        # ✅ ✅ DELETE FROM CHROMADB
+        chroma_collection.delete(ids=[pid])
+
+        return {"message": "Product deleted successfully"}
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/admin/products/{pid}")
 def update_product(pid: str, product: dict):
 
-    update_data = {
-        key: value for key, value in product.items()
-        if key != "images"
-    }
+    try:
+        # ✅ REMOVE images (as per your design)
+        update_data = {
+            key: value for key, value in product.items()
+            if key != "images"
+        }
 
-    result = products_collection.update_one(
-        {"pid": pid},
-        {"$set": update_data}
-    )
+        # ✅ UPDATE MONGODB
+        result = products_collection.update_one(
+            {"pid": pid},
+            {"$set": update_data}
+        )
 
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Product not found")
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Product not found")
 
-    return {"message": "Product updated"}
+        # ✅ FETCH UPDATED PRODUCT
+        updated_product = products_collection.find_one(
+            {"pid": pid},
+            {"_id": 0}
+        )
+
+        if not updated_product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        # ✅ NORMALIZE DATA
+        updated_product["brand"] = normalize_string(updated_product.get("brand"))
+        updated_product["images"] = normalize_list(updated_product.get("images"))
+        updated_product["category"] = normalize_dict(updated_product.get("category"))
+        updated_product["price"] = normalize_dict(updated_product.get("price"))
+        updated_product["specifications"] = normalize_specifications(
+            updated_product.get("specifications")
+        )
+
+        # =====================================
+        # ✅ REBUILD EMBEDDING TEXT
+        # =====================================
+        specs_text = specs_to_text(updated_product.get("specifications"))
+
+        embedding_text = f"""
+        {updated_product.get("title")}
+        Brand: {updated_product.get("brand")}
+        Category: {updated_product.get("category", {}).get("level_1")} 
+                  {updated_product.get("category", {}).get("level_2")} 
+                  {updated_product.get("category", {}).get("level_3")}
+        Description: {updated_product.get("description")}
+        Specifications:
+        {specs_text}
+        """
+
+        # ✅ CREATE NEW EMBEDDING
+        embedding = embedding_model.encode(
+            embedding_text,
+            normalize_embeddings=True
+        ).tolist()
+
+        # =====================================
+        # ✅ UPDATE CHROMADB (VERY IMPORTANT)
+        # =====================================
+        chroma_collection.update(
+            ids=[pid],
+            embeddings=[embedding],
+            metadatas=[{
+                "pid": pid,
+                "title": updated_product.get("title"),
+                "brand": updated_product.get("brand"),
+                "price": updated_product.get("price", {}).get("selling"),
+
+                "category_l1": updated_product.get("category", {}).get("level_1"),
+                "category_l2": updated_product.get("category", {}).get("level_2"),
+                "category_l3": updated_product.get("category", {}).get("level_3"),
+
+                "specifications": specs_text
+            }]
+        )
+
+        return {"message": "Product updated successfully"}
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =================================================
 # IMAGE PROXY
 # =================================================
 @app.get("/image-proxy")
-def image_proxy(url: str = Query(...)):
+def image_proxy(url: str):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
     try:
-        r = requests.get(url, stream=True, timeout=5)
+        r = requests.get(url, headers=headers, stream=True, timeout=5)
+
         return StreamingResponse(
             r.iter_content(1024),
             media_type=r.headers.get("Content-Type", "image/jpeg")
         )
     except Exception:
         return StreamingResponse(iter([]), status_code=204)
+
 
 
 # =================================================

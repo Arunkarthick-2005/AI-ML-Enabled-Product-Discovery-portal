@@ -4,13 +4,18 @@ import '../services/admin_service.dart';
 import '../models/product.dart';
 import '../services/product_service.dart';
 import 'admin_product_detail_view.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
+
 
 enum AdminViewState {
   home,
   categories,
   products,
   detail,
-  edit
+  edit,
+  add,
+  uploadCsv
 }
 
 class AdminHomeScreen extends StatefulWidget {
@@ -35,11 +40,14 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   final _title = TextEditingController();
   final _brand = TextEditingController();
   final _price = TextEditingController();
+  final _retailPrice = TextEditingController(); // ✅ NEW
   final _desc = TextEditingController();
   final _l1 = TextEditingController();
   final _l2 = TextEditingController();
   final _l3 = TextEditingController();
   final _specs = TextEditingController();
+  final _images = TextEditingController();
+  final _csvPath = TextEditingController();
 
   // ✅ SEARCH
   List<CategoryNode> _filteredCategories() {
@@ -59,6 +67,30 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
+  Future<bool> _requestStoragePermission() async {
+
+    if (Platform.isAndroid) {
+
+      if (await Permission.manageExternalStorage.isGranted) {
+        print("✅ Already granted");
+        return true;
+      }
+
+      var status = await Permission.manageExternalStorage.request();
+
+      if (status.isGranted) {
+        print("✅ Storage permission granted");
+        return true;
+      } else {
+        print("❌ Storage permission denied");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+
   // ✅ LOAD CATEGORIES
   void _loadCategories() async {
     setState(() => _viewState = AdminViewState.categories);
@@ -66,6 +98,29 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
     setState(() {
       _allCategories = data;
+    });
+  }
+
+  void _startUploadCsv() {
+    setState(() {
+      _viewState = AdminViewState.uploadCsv;
+    });
+  }
+
+  void _startAddProduct() {
+
+    // ✅ clear all fields
+    _title.clear();
+    _brand.clear();
+    _price.clear();
+    _desc.clear();
+    _l1.clear();
+    _l2.clear();
+    _l3.clear();
+    _specs.clear();
+
+    setState(() {
+      _viewState = AdminViewState.add;
     });
   }
 
@@ -79,7 +134,98 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           ProductService.getProductsByCategoryName(categoryName);
     });
   }
+  void _uploadCsvFromPath() async {
 
+    final path = _csvPath.text.trim();
+
+    // ✅ REQUEST PERMISSION FIRST
+    bool hasPermission = await _requestStoragePermission();
+
+    if (!hasPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Storage permission required ❌")),
+      );
+      return;
+    }
+
+    final file = File(path);
+
+    print("📂 Exists: ${file.existsSync()}");
+
+    if (!file.existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("File not found ❌")),
+      );
+      return;
+    }
+
+    try {
+      await ProductService.uploadCsv(file);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("CSV uploaded ✅")),
+      );
+
+    } catch (e) {
+      print("Upload error: $e");
+    }
+  }
+
+
+  void _createProduct() async {
+
+    // ✅ SPLIT IMAGES
+    final images = _images.text
+        .split(",")
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    // ✅ SPLIT SPECS
+    List<Map<String, String>> specs = [];
+
+    final rawSpecs = _specs.text.split(",");
+    for (var item in rawSpecs) {
+      if (item.contains(":")) {
+        final parts = item.split(":");
+        specs.add({
+          "key": parts[0].trim(),
+          "value": parts[1].trim(),
+        });
+      }
+    }
+
+    try {
+      final response = await ProductService.createProduct({
+        "title": _title.text,
+        "brand": _brand.text,
+        "description": _desc.text,
+
+        "price": {
+          "selling": int.tryParse(_price.text) ?? 0,
+          "retail": int.tryParse(_retailPrice.text) ?? 0,
+        },
+
+        "category": {
+          "level_1": _l1.text,
+          "level_2": _l2.text.isEmpty ? null : _l2.text,
+          "level_3": _l3.text.isEmpty ? null : _l3.text,
+        },
+
+        "images": images,
+
+        "specifications": specs
+      });
+
+      // ✅ BACK TO HOME
+      setState(() {
+        _viewState = AdminViewState.home;
+      });
+
+    } catch (e) {
+      print("Create Product Error: $e");
+    }
+  }
   // ✅ OPEN DETAIL
   void _openProduct(String pid) {
     setState(() {
@@ -100,6 +246,14 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       } else if (_viewState == AdminViewState.categories) {
         _viewState = AdminViewState.home;
       }
+      else if (_viewState == AdminViewState.add) {
+        _viewState = AdminViewState.home;
+      }
+      else if (_viewState == AdminViewState.uploadCsv) {
+        _viewState = AdminViewState.home;
+      }
+
+
     });
   }
 
@@ -135,11 +289,17 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   Widget _buildBody() {
     switch (_viewState) {
 
+      case AdminViewState.uploadCsv:
+        return _buildUploadCsvView(); // ✅ NEW
+
       case AdminViewState.edit:
-        return _buildEditView(); // ✅ NEW
+        return _buildEditView();
 
       case AdminViewState.home:
         return _buildHome();
+
+      case AdminViewState.add:
+        return _buildAddView();
 
       case AdminViewState.categories:
         return _buildCategoryTree();
@@ -155,16 +315,127 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   }
 
 
+
   // =============================
   Widget _buildHome() {
     return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+
+            // ✅ NORMAL PRODUCT INGESTION
+            _buildButton(
+              "Product Ingestion (Manual)",
+              Icons.inventory_2,
+              _startAddProduct,
+              Colors.orange,
+            ),
+
+            const SizedBox(height: 20),
+
+            // ✅ ✅ CSV INGESTION (UPDATED ✅)
+            _buildButton(
+              "Product Ingestion (CSV Upload)",
+              Icons.upload_file,  // ✅ better icon
+              _startUploadCsv,
+              Colors.white,
+            ),
+            const SizedBox(height: 20),
+
+            // ✅ CATEGORY
+            _buildButton(
+              "Category Management",
+              Icons.category,
+              _loadCategories,
+              Colors.green,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildAddView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildButton("Product Ingestion", Icons.inventory, () {}, Colors.blue),
+
+          // ✅ IMAGE (comma separated URLs)
+          _field("Image URLs (comma separated)", _images,maxLines: 2),
+
+          _field("Title", _title),
+          _field("Brand", _brand),
+
+          // ✅ PRICE
+          _field("Selling Price", _price),
+          _field("Retail Price", _retailPrice),
+
+          _field("Description", _desc, maxLines: 3),
+
+          const Divider(),
+
+          // ✅ CATEGORY
+          _field("Level 1", _l1),
+          _field("Level 2", _l2),
+          _field("Level 3", _l3),
+
+          const Divider(),
+
+          // ✅ SPECIFICATIONS
+          _field(
+            "Specifications (key:value,comma separated)",
+            _specs,
+            maxLines: 3,
+          ),
+
           const SizedBox(height: 20),
-          _buildButton("Category Management", Icons.category,
-              _loadCategories, Colors.green),
+
+          SizedBox(
+            width: double.infinity,
+            height: 45,
+            child: ElevatedButton(
+              onPressed: _createProduct,
+              child: const Text("Create Product"),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadCsvView() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+
+          const Text(
+            "Upload CSV (Enter File Path)",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          _field("CSV File Path", _csvPath),
+
+          const SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _uploadCsvFromPath,
+              child: const Text("Upload CSV"),
+            ),
+          ),
         ],
       ),
     );
@@ -418,6 +689,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     _title.text = p.title;
     _brand.text = p.brand ?? "";
     _price.text = p.price?["selling"]?.toString() ?? "";
+    _retailPrice.text = p.price?["retail"]?.toString() ?? "";
     _desc.text = p.description ?? "";
 
     _l1.text = p.category?["level_1"] ?? "";
@@ -442,8 +714,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         "brand": _brand.text,
         "description": _desc.text,
         "price": {
-          "selling": int.tryParse(_price.text) ?? 0
-        },
+          "selling": int.tryParse(_price.text) ?? 0,
+          "retail": int.tryParse(_retailPrice.text) ?? 0,
+    },
         "category": {
           "level_1": _l1.text,
           "level_2": _l2.text.isEmpty ? null : _l2.text,

@@ -100,4 +100,21 @@ class RecommendationService {
       ),
     );
   }
+  static Future<List<Product>> getNextBestAlternatives({
+    required String productId,
+    String query = "",
+    int limit = 5,
+  }) async {
+    final uri = Uri.parse(
+        "$baseUrl/products/$productId/alternatives"
+            "?query=${Uri.encodeComponent(query)}"
+            "&limit=$limit");
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) return [];
+
+    final List data = jsonDecode(response.body);
+    return data.map((e) => Product.fromJson(e)).toList();
+  }
 }

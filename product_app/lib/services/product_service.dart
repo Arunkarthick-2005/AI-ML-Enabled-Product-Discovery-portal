@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/product.dart';
+import 'dart:io';
 
 /// ✅ Model for Home Screen Collections
 class HomeCollections {
@@ -175,4 +176,52 @@ class ProductService {
 
     return response.statusCode == 200;
   }
+  static Future createProduct(Map<String, dynamic> data) async {
+    final response = await http.post(
+      Uri.parse("$baseUrl/admin/products"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception("Failed to create product");
+    }
+
+    return jsonDecode(response.body);
+  }
+
+  static Future<void> uploadCsv(File file) async {
+    try {
+      print("📤 Uploading file: ${file.path}");
+
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse("$baseUrl/admin/products/upload-csv"),
+      );
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          file.path,
+        ),
+      );
+
+      var response = await request.send();
+
+      print("📡 Response status: ${response.statusCode}");
+
+      final responseBody = await response.stream.bytesToString();
+      print("📡 Response body: $responseBody");
+
+      if (response.statusCode != 200) {
+        throw Exception("Server error: ${response.statusCode}");
+      }
+
+    } catch (e) {
+      print("❌ Service error: $e");
+      rethrow;
+    }
+  }
+
+
 }

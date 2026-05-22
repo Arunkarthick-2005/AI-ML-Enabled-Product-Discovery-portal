@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+
 class CategoryNode {
   final String name;
   final List<CategoryNode>? children;
@@ -37,4 +38,5 @@ class AdminService {
 
     return data.map((e) => CategoryNode.fromJson(e)).toList();
   }
+
 }

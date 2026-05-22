@@ -58,10 +58,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // --------------------------------------------------
   // OPEN PRODUCT
   // --------------------------------------------------
-  void _openProduct(String productId, {
-    bool fromSearch = false,
-    bool fromSimilar = false,
-  }) {
+  void _openProduct(
+      String productId, {
+        bool fromSearch = false,
+        bool fromSimilar = false,
+      }) {
     setState(() {
       if (_viewState != HomeViewState.detail) {
         _previousViewState = _viewState;
@@ -210,6 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return ProductDetailView(
           productId: _productHistory.last,
           onOpenProduct: _openProduct,
+          query: _lastQuery, // ✅ IMPORTANT
         );
     }
   }
@@ -435,6 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+
                 if (sellingPrice != null)
                   Text(
                     "₹$sellingPrice",
@@ -444,16 +447,30 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.blue,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Icon(
-                    Icons.auto_awesome,
-                    size: 14,
-                    color: Colors.white,
+                // ✅ ✅ COPILOT BUTTON (FIXED)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque, // ✅ important
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => CopilotChatView(
+                          productId: product.pid,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome,
+                      size: 14,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
