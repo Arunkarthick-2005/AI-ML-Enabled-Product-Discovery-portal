@@ -55,8 +55,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
     // ✅ NEW: Alternatives
     _alternativesFuture =
         RecommendationService.getNextBestAlternatives(
-          productId: id,
-          query: "", // can pass search query later
+          productId: id
         );
   }
 

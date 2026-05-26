@@ -406,6 +406,22 @@ def login(user: UserLogin):
         "role": "user"
     }
 
+@app.get("/users/{user_id}")
+def get_user_profile(user_id: str):
+
+    user = users_collection.find_one(
+         {"id": user_id},
+        {"password": 0}  # ✅ exclude password
+    )
+
+    if not user:
+        return {}
+
+    user["_id"] = str(user["_id"])
+
+    return user
+
+
 
 # =================================================
 # ✅ PRODUCT SEARCH (FINAL DESIGN)
@@ -1034,25 +1050,20 @@ Product:
     }
 
 @app.get("/products/{pid}/alternatives", response_model=List[Product])
-def get_next_best_alternatives(
-    pid: str,
-    query: str = "",
-    limit: int = 5
-):
+def get_next_best_alternatives(pid: str, limit: int = 5):
     """
-    Final Version:
-    ✅ Dual similarity (product + query)
-    ✅ Intent-aware pricing (FIXED)
-    ✅ Proper fallback (no query → product only)
-    ✅ Safe embedding handling
-    ✅ Optimized DB calls
-    ✅ Normalized output
+    Constraint-based Next Best Alternatives:
+    ✅ Same category
+    ✅ Price range filtering
+    ✅ Spec similarity
+    ✅ Clean scoring
     """
 
     # -----------------------------------------------------
-    # ✅ 1. BASE PRODUCT
+    # ✅ 1. LOAD BASE PRODUCT
     # -----------------------------------------------------
     base_product = products_collection.find_one({"pid": pid})
+
     if not base_product:
         return []
 
@@ -1064,199 +1075,81 @@ def get_next_best_alternatives(
         base_product.get("category", {}).get("level_1")
     )
 
-    # -----------------------------------------------------
-    # ✅ 2. INTENT DETECTION
-    # -----------------------------------------------------
-    query_lower = query.lower()
-    keywords = extract_keywords(query_lower)
-    brand_intent = detect_brand(query_lower, BRAND_INDEX)
+    base_brand = (base_product.get("brand") or "").lower()
 
-    is_price_intent = any(k in query_lower for k in ["cheap", "budget", "under", "low","less than"])
-    is_premium_intent = any(k in query_lower for k in ["best", "top", "premium","above","greater than"])
+    base_specs = normalize_specifications(base_product.get("specifications"))
+    base_spec_text = specs_to_text(base_specs).lower() if base_specs else ""
 
     # -----------------------------------------------------
-    # ✅ 3. DYNAMIC WEIGHTS (FIXED)
+    # ✅ 2. PRICE RANGE CONSTRAINT (±20%)
     # -----------------------------------------------------
-    weights = {
-        "similarity": 0.4,
-        "price": 0.2,
-        "brand": 0.2,
-        "spec": 0.2
-    }
-
-    if is_price_intent:
-        weights["price"] = 0.5
-        weights["similarity"] = 0.3
-
-    elif is_premium_intent:
-        weights["price"] = 0.1   # ✅ reduce price effect
-        weights["similarity"] = 0.5
-        weights["spec"] = 0.4
-
-    if brand_intent:
-        weights["brand"] += 0.3
-
-    total = sum(weights.values())
-    weights = {k: v / total for k, v in weights.items()}
+    min_price = base_price * 0.8
+    max_price = base_price * 1.2
 
     # -----------------------------------------------------
-    # ✅ 4. BASE EMBEDDING (SAFE)
+    # ✅ 3. FETCH SAME CATEGORY PRODUCTS
     # -----------------------------------------------------
-    base_result = chroma_collection.get(
-        where={"pid": pid},
-        include=["embeddings"]
-    )
-
-    if (
-        base_result is None or
-        "embeddings" not in base_result or
-        base_result["embeddings"] is None or
-        len(base_result["embeddings"]) == 0 or
-        base_result["embeddings"][0] is None
-    ):
-        return []
-
-    base_embedding = np.array(base_result["embeddings"][0])
-
-    # -----------------------------------------------------
-    # ✅ 5. QUERY EMBEDDING (OPTIONAL)
-    # -----------------------------------------------------
-    query_embedding = None
-    if query.strip():
-        query_embedding = np.array(
-            embedding_model.encode(query, normalize_embeddings=True)
-        )
-
-    # -----------------------------------------------------
-    # ✅ 6. RETRIEVE CANDIDATES
-    # -----------------------------------------------------
-    similar = chroma_collection.query(
-        query_embeddings=[base_embedding.tolist()],
-        n_results=20,
-        include=["metadatas", "distances", "embeddings"]
-    )
-
-    if (
-        similar is None or
-        "metadatas" not in similar or
-        similar["metadatas"] is None or
-        len(similar["metadatas"]) == 0
-    ):
-        return []
-
-    if (
-        "embeddings" not in similar or
-        similar["embeddings"] is None or
-        len(similar["embeddings"]) == 0
-    ):
-        return []
-
-    candidates = similar["metadatas"][0]
-    distances = similar.get("distances", [[]])[0]
-    candidate_embeddings = similar["embeddings"][0]
-
-    # -----------------------------------------------------
-    # ✅ 7. BATCH FETCH PRODUCTS
-    # -----------------------------------------------------
-    candidate_pids = [
-        meta.get("pid")
-        for meta in candidates
-        if meta.get("pid") and meta.get("pid") != pid
-    ]
-
-    products_data = list(
+    candidates = list(
         products_collection.find(
-            {"pid": {"$in": candidate_pids}},
+            {
+                "pid": {"$ne": pid},  # exclude same product
+                "$or": [
+                    {"category.level_3": base_category},
+                    {"category.level_2": base_category},
+                    {"category.level_1": base_category},
+                ]
+            },
             {"_id": 0}
         )
     )
 
-    product_map = {p["pid"]: p for p in products_data}
+    if not candidates:
+        return []
 
     scored_products = []
 
     # -----------------------------------------------------
-    # ✅ 8. SCORING LOOP
+    # ✅ 4. FILTER + SCORE
     # -----------------------------------------------------
-    for meta, dist, cand_emb in zip(candidates, distances, candidate_embeddings):
-
-        candidate_pid = meta.get("pid")
-        if not candidate_pid or candidate_pid == pid:
-            continue
-
-        product = product_map.get(candidate_pid)
-        if not product:
-            continue
-
-        # ✅ CATEGORY FILTER
-        category = (
-            product.get("category", {}).get("level_3") or
-            product.get("category", {}).get("level_2") or
-            product.get("category", {}).get("level_1")
-        )
-
-        if category != base_category:
-            continue
+    for product in candidates:
 
         price = product.get("price", {}).get("selling", 0)
-        brand = (product.get("brand") or "").lower()
-        specs = product.get("specifications", {})
-
         if price == 0:
             continue
 
-        # -------------------------------------------------
-        # ✅ 9. DUAL SIMILARITY (WITH FALLBACK)
-        # -------------------------------------------------
-        sim_product = 1 / (1 + dist) if dist is not None else 0
+        # ✅ PRICE CONSTRAINT
+        if not (min_price <= price <= max_price):
+            continue
 
-        if query_embedding is not None and cand_emb is not None:
-            cand_vec = np.array(cand_emb)
-            sim_query = float(np.dot(query_embedding, cand_vec))
-            final_similarity = 0.6 * sim_product + 0.4 * sim_query
-        else:
-            final_similarity = sim_product
+        brand = (product.get("brand") or "").lower()
+
+        specs = normalize_specifications(product.get("specifications"))
+        spec_text = specs_to_text(specs).lower() if specs else ""
 
         # -------------------------------------------------
-        # ✅ 10. FIXED PRICE LOGIC (IMPORTANT ✅)
+        # ✅ 5. SCORING
         # -------------------------------------------------
-        if is_price_intent:
-            # ✅ prefer cheaper
-            price_score = max(0, (base_price - price) / base_price)
-        elif is_premium_intent:
-            # ✅ allow higher price products
-            price_score = (price - base_price) / base_price if base_price else 0
-        else:
-            # ✅ balanced
-            price_score = (base_price - price) / base_price if base_price else 0
 
-        # ✅ clamp values
-        price_score = max(-0.5, min(price_score, 0.5))
+        # ✅ Price similarity (closer is better)
+        price_similarity = 1 - abs(base_price - price) / base_price
 
-        # -------------------------------------------------
-        # ✅ 11. BRAND + SPEC
-        # -------------------------------------------------
-        brand_score = 1 if (brand_intent and brand_intent in brand) else 0
+        # ✅ Spec similarity (keyword overlap)
+        spec_score = 0
+        if base_spec_text and spec_text:
+            base_words = set(base_spec_text.split())
+            candidate_words = set(spec_text.split())
 
-        normalized_specs = normalize_specifications(specs)
-        spec_text = specs_to_text(normalized_specs).lower() if normalized_specs else ""
+            if base_words:
+                spec_score = len(base_words & candidate_words) / len(base_words)
 
-        spec_match_score = 0
-        for kw in keywords:
-            if kw in spec_text:
-                spec_match_score += 1
+        # ✅ Brand similarity
+        brand_score = 1 if base_brand and base_brand in brand else 0
 
-        if keywords:
-            spec_match_score /= len(keywords)
-
-        # -------------------------------------------------
-        # ✅ 12. FINAL SCORE
-        # -------------------------------------------------
+        # ✅ Final score (simple & stable)
         final_score = (
-            final_similarity * weights["similarity"] +
-            price_score * weights["price"] +
-            brand_score * weights["brand"] +
-            spec_match_score * weights["spec"]
+            0.4 * price_similarity +
+            0.4 * spec_score +
+            0.2 * brand_score
         )
 
         scored_products.append((product, final_score))
@@ -1265,13 +1158,13 @@ def get_next_best_alternatives(
         return []
 
     # -----------------------------------------------------
-    # ✅ SORT
+    # ✅ 6. SORT & RETURN
     # -----------------------------------------------------
     scored_products.sort(key=lambda x: x[1], reverse=True)
     top_products = [p for p, _ in scored_products[:limit]]
 
     # -----------------------------------------------------
-    # ✅ NORMALIZATION
+    # ✅ 7. NORMALIZE OUTPUT
     # -----------------------------------------------------
     normalized_products = []
 
@@ -1772,7 +1665,7 @@ def image_proxy(url: str):
     }
 
     try:
-        r = requests.get(url, headers=headers, stream=True, timeout=5)
+        r = requests.get(url, headers=headers, stream=True, timeout=5,verify=False)
 
         return StreamingResponse(
             r.iter_content(1024),

@@ -102,13 +102,11 @@ class RecommendationService {
   }
   static Future<List<Product>> getNextBestAlternatives({
     required String productId,
-    String query = "",
     int limit = 5,
   }) async {
     final uri = Uri.parse(
-        "$baseUrl/products/$productId/alternatives"
-            "?query=${Uri.encodeComponent(query)}"
-            "&limit=$limit");
+      "$baseUrl/products/$productId/alternatives?limit=$limit",
+    );
 
     final response = await http.get(uri);
 

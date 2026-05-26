@@ -96,4 +96,15 @@ class AuthService {
       return null;
     }
   }
+
+  static Future<Map<String, dynamic>?> getUserProfile(String userId) async {
+    final response = await http.get(
+      Uri.parse("http://10.0.2.2:8000/users/$userId"),
+    );
+
+    if (response.statusCode != 200) return null;
+
+    return jsonDecode(response.body);
+  }
+
 }

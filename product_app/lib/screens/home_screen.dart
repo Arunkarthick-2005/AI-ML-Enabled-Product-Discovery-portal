@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:product_app/services/auth_service.dart';
 import '../widgets/search_bar_widget.dart';
 import '../models/product.dart';
 import '../services/product_service.dart';
@@ -91,6 +92,109 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showProfilePanel() {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: "Profile",
+      transitionDuration: const Duration(milliseconds: 300),
+
+      transitionBuilder: (context, animation, _, child) {
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(-1, 0),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        );
+      },
+
+      pageBuilder: (_, __, ___) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topLeft, // ✅ FIX 1 (top-left)
+
+            child: Material(
+              color: Colors.transparent,
+
+              child: FutureBuilder<Map<String, dynamic>?>(
+                future: AuthService.getUserProfile(widget.userId),
+                builder: (context, snapshot) {
+
+                  if (!snapshot.hasData) {
+                    return const SizedBox(
+                      width: 260,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+
+                  final user = snapshot.data!;
+
+                  return Container(
+                    width: 260,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      // ✅ REMOVE full curve (feels floating)
+                      borderRadius: BorderRadius.only(
+                        topRight: Radius.circular(12),
+                        bottomRight: Radius.circular(12),
+                      ),
+                    ),
+
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+
+                        // ✅ HEADER
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: const BoxDecoration(
+                            color: Colors.blue,
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(12),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.person,
+                                  color: Colors.white, size: 32),
+                              const SizedBox(height: 8),
+
+                              Text(
+                                user["name"] ?? "",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                ),
+                              ),
+
+                              Text(
+                                user["email"] ?? "",
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // ✅ PHONE
+                        ListTile(
+                          leading: const Icon(Icons.phone),
+                          title: Text(user["mobile"] ?? ""),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // --------------------------------------------------
   // BACK HANDLING
   // --------------------------------------------------
@@ -150,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea( // ✅ FIXED
+      body: SafeArea(
         child: Column(
           children: [
             _buildHeader(),
@@ -170,15 +274,32 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHeader() {
     return Container(
       height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.only(right: 16), // ✅ FIXED (no left gap)
       color: Colors.blue,
       child: Row(
         children: [
+
+          // ✅ LEFT ICON (NO GAP)
           if (_viewState != HomeViewState.home)
             IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
               icon: const Icon(Icons.arrow_back, color: Colors.white),
               onPressed: _handleBack,
+            )
+          else
+            IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              icon: const Icon(Icons.person, color: Colors.white),
+              onPressed: _showProfilePanel, // ✅ CORRECT
             ),
+
+
+
+          const SizedBox(width: 10),
+
+          // ✅ TITLE
           const Expanded(
             child: Text(
               "Product Discovery Portal",
@@ -189,6 +310,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
+          // ✅ RIGHT ICON (still has spacing)
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
             onPressed: () => _logout(context),
