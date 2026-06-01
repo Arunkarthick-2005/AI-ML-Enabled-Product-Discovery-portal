@@ -141,12 +141,22 @@ class ProductService {
     final List data = jsonDecode(response.body);
     return data.map((e) => Product.fromJson(e)).toList();
   }
-  static Future<List<Product>> getProductsByCategoryName(
-      String categoryName,
-      ) async {
-    final response = await http.get(
-      Uri.parse("$baseUrl/admin/products-by-name?name=$categoryName"),
-    );
+  static Future<List<Product>> getProductsByCategoryPath({
+    String? l1,
+    String? l2,
+    String? l3,
+  }) async {
+
+    final queryParams = {
+      if (l1 != null) "l1": l1,
+      if (l2 != null) "l2": l2,
+      if (l3 != null) "l3": l3,
+    };
+
+    final uri = Uri.parse("$baseUrl/admin/products-by-category")
+        .replace(queryParameters: queryParams);
+
+    final response = await http.get(uri);
 
     if (response.statusCode != 200) return [];
 

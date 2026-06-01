@@ -129,7 +129,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
                 _similarProducts(),
                 const Divider(height: 32),
                 const Text(
-                  "Next Best Alternatives",
+                  "Best Alternatives",
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
                 const SizedBox(height: 12),

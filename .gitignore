@@ -17,6 +17,7 @@ Backend/models/all-MiniLM-L6-v2
 Backend/models/Quantized Mistral Model
 Backend/models/als_model.pkl
 Backend/chroma_db
+Backend/utils/sample.py
 # Flutter generated
 .dart_tool/
 build/

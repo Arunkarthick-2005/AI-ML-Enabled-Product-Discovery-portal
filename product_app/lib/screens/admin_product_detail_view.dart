@@ -55,14 +55,24 @@ class _AdminProductDetailViewState
                 width: double.infinity,
                 child: product.images.isNotEmpty
                     ? PageView(
-                  children: product.images
-                      .map((e) => Image.network(
-                    e, // ✅ NO PROXY
-                    fit: BoxFit.contain,
-                  ))
-                      .toList(),
+                  children: product.images.map((img) {
+
+                    final proxyUrl =
+                        "http://10.0.2.2:8000/image-proxy?url=${Uri.encodeComponent(img)}";
+
+                    return Image.network(
+                      proxyUrl, // ✅ PROXY ADDED
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.broken_image),
+                    );
+
+                  }).toList(),
                 )
-                    : Container(color: Colors.grey.shade200),
+                    : Container(
+                  color: Colors.grey.shade200,
+                  child: const Icon(Icons.image),
+                ),
               ),
 
               const SizedBox(height: 16),

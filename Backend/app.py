@@ -1051,13 +1051,6 @@ Product:
 
 @app.get("/products/{pid}/alternatives", response_model=List[Product])
 def get_next_best_alternatives(pid: str, limit: int = 5):
-    """
-    Constraint-based Next Best Alternatives:
-    ✅ Same category
-    ✅ Price range filtering
-    ✅ Spec similarity
-    ✅ Clean scoring
-    """
 
     # -----------------------------------------------------
     # ✅ 1. LOAD BASE PRODUCT
@@ -1068,37 +1061,58 @@ def get_next_best_alternatives(pid: str, limit: int = 5):
         return []
 
     base_price = base_product.get("price", {}).get("selling", 0)
+    base_category = normalize_dict(base_product.get("category"))
+    base_brand = (base_product.get("brand") or "").lower()
+    base_specs = normalize_specifications(base_product.get("specifications"))
+    base_title = base_product.get("title", "")
 
-    base_category = (
-        base_product.get("category", {}).get("level_3") or
-        base_product.get("category", {}).get("level_2") or
-        base_product.get("category", {}).get("level_1")
+    # -----------------------------------------------------
+    # ✅ 2. BUILD SEMANTIC QUERY
+    # -----------------------------------------------------
+    spec_text = specs_to_text(base_specs)
+
+    query_text = " ".join(filter(None, [
+        base_title,
+        base_category.get("level_1"),
+        base_category.get("level_2"),
+        base_category.get("level_3"),
+        spec_text
+    ]))
+
+    embedding = embedding_model.encode(
+        query_text,
+        normalize_embeddings=True
+    ).tolist()
+
+    # -----------------------------------------------------
+    # ✅ 3. SEMANTIC SEARCH
+    # -----------------------------------------------------
+    results = chroma_collection.query(
+        query_embeddings=[embedding],
+        n_results=80,
+        include=["metadatas"]
     )
 
-    base_brand = (base_product.get("brand") or "").lower()
+    if not results or not results.get("metadatas"):
+        return []
 
-    base_specs = normalize_specifications(base_product.get("specifications"))
-    base_spec_text = specs_to_text(base_specs).lower() if base_specs else ""
+    metadatas = results["metadatas"][0]
+
+    candidate_pids = [
+        meta.get("pid")
+        for meta in metadatas
+        if meta.get("pid") != pid
+    ]
+
+    if not candidate_pids:
+        return []
 
     # -----------------------------------------------------
-    # ✅ 2. PRICE RANGE CONSTRAINT (±20%)
-    # -----------------------------------------------------
-    min_price = base_price * 0.8
-    max_price = base_price * 1.2
-
-    # -----------------------------------------------------
-    # ✅ 3. FETCH SAME CATEGORY PRODUCTS
+    # ✅ 4. FETCH PRODUCTS
     # -----------------------------------------------------
     candidates = list(
         products_collection.find(
-            {
-                "pid": {"$ne": pid},  # exclude same product
-                "$or": [
-                    {"category.level_3": base_category},
-                    {"category.level_2": base_category},
-                    {"category.level_1": base_category},
-                ]
-            },
+            {"pid": {"$in": candidate_pids}},
             {"_id": 0}
         )
     )
@@ -1106,65 +1120,148 @@ def get_next_best_alternatives(pid: str, limit: int = 5):
     if not candidates:
         return []
 
+    # -----------------------------------------------------
+    # ✅ 5. CATEGORY FALLBACK (INLINE ✅)
+    # -----------------------------------------------------
+    level_1 = base_category.get("level_1")
+    level_2 = base_category.get("level_2")
+    level_3 = base_category.get("level_3")
+
+    filtered_candidates = []
+
+    strict = [
+        p for p in candidates
+        if (
+            normalize_dict(p.get("category")).get("level_1") == level_1 and
+            normalize_dict(p.get("category")).get("level_2") == level_2 and
+            normalize_dict(p.get("category")).get("level_3") == level_3
+        )
+    ]
+
+    if len(strict) >= limit:
+        filtered_candidates = strict
+    else:
+        medium = [
+            p for p in candidates
+            if (
+                normalize_dict(p.get("category")).get("level_1") == level_1 and
+                normalize_dict(p.get("category")).get("level_2") == level_2
+            )
+        ]
+
+        if len(medium) >= limit:
+            filtered_candidates = medium
+        else:
+            loose = [
+                p for p in candidates
+                if normalize_dict(p.get("category")).get("level_1") == level_1
+            ]
+
+            filtered_candidates = loose if loose else medium
+
+    if not filtered_candidates:
+        return []
+
+    # -----------------------------------------------------
+    # ✅ 6. BASE SPEC MAP (INLINE ✅)
+    # -----------------------------------------------------
+    base_spec_map = {}
+    if base_specs and "product_specification" in base_specs:
+        for item in base_specs["product_specification"]:
+            key = str(item.get("key", "")).lower().strip()
+            value = str(item.get("value", "")).lower().strip()
+            if key and value:
+                base_spec_map[key] = value
+
+    # -----------------------------------------------------
+    # ✅ 7. PRICE RELAXATION (INLINE ✅)
+    # -----------------------------------------------------
+    price_ranges = [
+        (0.8, 1.2),       # strict
+        (0.6, 1.4),       # relaxed
+        (0, float("inf")) # fallback
+    ]
+
     scored_products = []
 
-    # -----------------------------------------------------
-    # ✅ 4. FILTER + SCORE
-    # -----------------------------------------------------
-    for product in candidates:
+    for lower, upper in price_ranges:
 
-        price = product.get("price", {}).get("selling", 0)
-        if price == 0:
-            continue
+        scored_products.clear()
 
-        # ✅ PRICE CONSTRAINT
-        if not (min_price <= price <= max_price):
-            continue
+        min_price = base_price * lower
+        max_price = base_price * upper
 
-        brand = (product.get("brand") or "").lower()
+        for product in filtered_candidates:
 
-        specs = normalize_specifications(product.get("specifications"))
-        spec_text = specs_to_text(specs).lower() if specs else ""
+            price = product.get("price", {}).get("selling", 0)
+            if price == 0:
+                continue
 
-        # -------------------------------------------------
-        # ✅ 5. SCORING
-        # -------------------------------------------------
+            if not (min_price <= price <= max_price):
+                continue
 
-        # ✅ Price similarity (closer is better)
-        price_similarity = 1 - abs(base_price - price) / base_price
+            brand = (product.get("brand") or "").lower()
+            specs = normalize_specifications(product.get("specifications"))
 
-        # ✅ Spec similarity (keyword overlap)
-        spec_score = 0
-        if base_spec_text and spec_text:
-            base_words = set(base_spec_text.split())
-            candidate_words = set(spec_text.split())
+            # ✅ candidate spec map
+            candidate_map = {}
+            if specs and "product_specification" in specs:
+                for item in specs["product_specification"]:
+                    key = str(item.get("key", "")).lower().strip()
+                    value = str(item.get("value", "")).lower().strip()
+                    if key and value:
+                        candidate_map[key] = value
 
-            if base_words:
-                spec_score = len(base_words & candidate_words) / len(base_words)
+            # ✅ price similarity
+            price_similarity = 1 - abs(base_price - price) / base_price
 
-        # ✅ Brand similarity
-        brand_score = 1 if base_brand and base_brand in brand else 0
+            # ✅ spec similarity
+            match_score = 0
+            total = 0
 
-        # ✅ Final score (simple & stable)
-        final_score = (
-            0.4 * price_similarity +
-            0.4 * spec_score +
-            0.2 * brand_score
-        )
+            for key, base_val in base_spec_map.items():
+                if key in candidate_map:
+                    total += 1
+                    if base_val == candidate_map[key]:
+                        match_score += 1
 
-        scored_products.append((product, final_score))
+            spec_score = match_score / total if total > 0 else 0
+
+            # ✅ debug
+            print("\n--- SPEC DEBUG ---")
+            print(f"BASE MAP: {base_spec_map}")
+            print(f"CAND MAP: {candidate_map}")
+            print(f"MATCH: {match_score}/{total}")
+            print(f"SPEC SCORE: {spec_score}")
+
+            # ✅ brand score
+            brand_score = 1 if base_brand and base_brand in brand else 0
+
+            # ✅ final score (UNCHANGED ✅)
+            final_score = (
+                0.4 * price_similarity +
+                0.4 * spec_score +
+                0.2 * brand_score
+            )
+
+            scored_products.append((product, final_score))
+
+        # ✅ stop when enough results found
+        if len(scored_products) >= limit:
+            print(f"✅ Using price range: {lower}-{upper}")
+            break
 
     if not scored_products:
         return []
 
     # -----------------------------------------------------
-    # ✅ 6. SORT & RETURN
+    # ✅ 8. SORT & SELECT
     # -----------------------------------------------------
     scored_products.sort(key=lambda x: x[1], reverse=True)
     top_products = [p for p, _ in scored_products[:limit]]
 
     # -----------------------------------------------------
-    # ✅ 7. NORMALIZE OUTPUT
+    # ✅ 9. NORMALIZE OUTPUT
     # -----------------------------------------------------
     normalized_products = []
 
@@ -1173,9 +1270,7 @@ def get_next_best_alternatives(pid: str, limit: int = 5):
         p["images"] = normalize_list(p.get("images"))
         p["category"] = normalize_dict(p.get("category"))
         p["price"] = normalize_dict(p.get("price"))
-        p["specifications"] = normalize_specifications(
-            p.get("specifications")
-        )
+        p["specifications"] = normalize_specifications(p.get("specifications"))
 
         normalized_products.append(Product(**p))
 
@@ -1185,6 +1280,7 @@ def get_next_best_alternatives(pid: str, limit: int = 5):
 @app.get("/admin/categories-tree")
 def get_categories():
 
+    # ✅ Fetch category fields
     data = list(
         products_collection.find(
             {},
@@ -1206,64 +1302,98 @@ def get_categories():
         l2 = cat.get("level_2")
         l3 = cat.get("level_3")
 
+        # -------------------------------------------------
+        # ✅ 1. BASIC VALIDATION
+        # -------------------------------------------------
         if not l1:
             continue
+
+        # ✅ Avoid obvious product-title cases (light filtering)
+        if l2 is None and l3 is None:
+            # long strings usually product names
+            if len(l1.split()) > 6:
+                continue
+
+        # -------------------------------------------------
+        # ✅ 2. BUILD TREE
+        # -------------------------------------------------
 
         # ✅ LEVEL 1
         if l1 not in tree:
             tree[l1] = {}
 
+        # ✅ CASE: only L1 exists → keep it
+        if not l2:
+            continue
+
         # ✅ LEVEL 2
-        if l2:
-            if l2 not in tree[l1]:
-                tree[l1][l2] = {}
+        if l2 not in tree[l1]:
+            tree[l1][l2] = set()
 
-            # ✅ LEVEL 3
-            if l3:
-                tree[l1][l2][l3] = {}
-        else:
-            # ✅ handle cases where only L1 exists
-            tree[l1] = tree[l1] or {}
+        # ✅ CASE: L1 + L2 (no L3)
+        if not l3:
+            continue
 
-    # ✅ convert dict → tree recursively
-    def build_tree(node):
-        result = []
-        for key, value in node.items():
-            entry = {"name": key}
+        # ✅ LEVEL 3
+        tree[l1][l2].add(l3)
 
-            children = build_tree(value)
-            if children:
-                entry["children"] = children
+    # -------------------------------------------------
+    # ✅ 3. BUILD OUTPUT TREE
+    # -------------------------------------------------
+    result = []
 
-            result.append(entry)
+    for l1, l2_dict in tree.items():
 
-        return result
+        node_l1 = {"name": l1}
 
-    return build_tree(tree)
+        # ✅ if no children → return L1 only
+        if not l2_dict:
+            result.append(node_l1)
+            continue
 
-@app.get("/admin/products-by-name")
-def products_by_name(name: str = Query(...)):
+        node_l1["children"] = []
 
-    # ✅ escape special regex characters safely
-    safe_name = re.escape(name.strip())
+        for l2, l3_set in l2_dict.items():
 
-    # ✅ case-insensitive + partial match
-    regex = {"$regex": safe_name, "$options": "i"}
+            node_l2 = {"name": l2}
+
+            # ✅ if no L3 → L2 is leaf
+            if not l3_set:
+                node_l1["children"].append(node_l2)
+                continue
+
+            node_l2["children"] = [
+                {"name": l3} for l3 in sorted(l3_set)
+            ]
+
+            node_l1["children"].append(node_l2)
+
+        result.append(node_l1)
+
+    return result
+
+
+@app.get("/admin/products-by-category")
+def products_by_category(
+    l1: str = None,
+    l2: str = None,
+    l3: str = None,
+):
+    query = {}
+
+    if l1:
+        query["category.level_1"] = l1
+    if l2:
+        query["category.level_2"] = l2
+    if l3:
+        query["category.level_3"] = l3
 
     products = list(
-        products_collection.find(
-            {
-                "$or": [
-                    {"category.level_1": regex},
-                    {"category.level_2": regex},
-                    {"category.level_3": regex}
-                ]
-            },
-            {"_id": 0}
-        )
+        products_collection.find(query, {"_id": 0})
     )
 
     return products
+
 
 
 @app.post("/admin/products")

@@ -48,6 +48,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   final _specs = TextEditingController();
   final _images = TextEditingController();
   final _csvPath = TextEditingController();
+  String? _selectedL1;
+  String? _selectedL2;
+  String? _selectedL3;
+
 
   // ✅ SEARCH
   List<CategoryNode> _filteredCategories() {
@@ -65,6 +69,26 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       MaterialPageRoute(builder: (_) => const LoginScreen()),
           (_) => false,
     );
+  }
+
+  void _loadProductsByPath({String? l1, String? l2, String? l3}) {
+    setState(() {
+      _viewState = AdminViewState.products;
+
+      // ✅ ✅ CRITICAL FIX (STORE VALUES)
+      _selectedL1 = l1;
+      _selectedL2 = l2;
+      _selectedL3 = l3;
+
+      _currentCategoryName = "$l1 > $l2 > $l3";
+
+      _productFuture =
+          ProductService.getProductsByCategoryPath(
+            l1: l1,
+            l2: l2,
+            l3: l3,
+          );
+    });
   }
 
   Future<bool> _requestStoragePermission() async {
@@ -125,7 +149,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   }
 
   // ✅ LOAD PRODUCTS
-  void _loadProducts(String categoryName) {
+  /*void _loadProducts(String categoryName) {
     setState(() {
       _currentCategoryName = categoryName;
       _viewState = AdminViewState.products;
@@ -133,7 +157,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       _productFuture =
           ProductService.getProductsByCategoryName(categoryName);
     });
-  }
+  }*/
   void _uploadCsvFromPath() async {
 
     final path = _csvPath.text.trim();
@@ -242,7 +266,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       } else if (_viewState == AdminViewState.detail) {
         _viewState = AdminViewState.products;
       } else if (_viewState == AdminViewState.products) {
-        _viewState = AdminViewState.categories;
+        _loadCategories();
       } else if (_viewState == AdminViewState.categories) {
         _viewState = AdminViewState.home;
       }
@@ -324,23 +348,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
-            // ✅ NORMAL PRODUCT INGESTION
-            _buildButton(
-              "Product Ingestion (Manual)",
-              Icons.inventory_2,
-              _startAddProduct,
-              Colors.orange,
-            ),
-
-            const SizedBox(height: 20),
-
             // ✅ ✅ CSV INGESTION (UPDATED ✅)
             _buildButton(
               "Product Ingestion (CSV Upload)",
               Icons.upload_file,  // ✅ better icon
               _startUploadCsv,
-              Colors.white,
+              Colors.lightBlue,
             ),
             const SizedBox(height: 20),
 
@@ -475,18 +488,47 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
-  Widget _tree(CategoryNode n) {
-    if (n.children == null || n.children!.isEmpty) {
+  Widget _tree(CategoryNode n, {String? l1, String? l2}) {
+
+    String? currentL1 = l1;
+    String? currentL2 = l2;
+    String? currentL3;
+
+    // ✅ determine hierarchy
+    if (l1 == null) {
+      currentL1 = n.name;      // Level 1
+    } else if (l2 == null) {
+      currentL2 = n.name;      // Level 2
+    } else {
+      currentL3 = n.name;      // Level 3
+    }
+
+    bool isLeaf = n.children == null || n.children!.isEmpty;
+
+    // ✅ ✅ LEAF NODE → LOAD PRODUCTS
+    if (isLeaf) {
       return ListTile(
         title: Text(n.name),
         trailing: const Icon(Icons.arrow_forward),
-        onTap: () => _loadProducts(n.name),
+
+        onTap: () => _loadProductsByPath(
+          l1: currentL1,
+          l2: currentL2,
+          l3: currentL3,
+        ),
       );
     }
 
+    // ✅ ✅ NON-LEAF → ONLY EXPAND (NO PRODUCT LOAD)
     return ExpansionTile(
       title: Text(n.name),
-      children: n.children!.map(_tree).toList(),
+      children: n.children!.map((child) {
+        return _tree(
+          child,
+          l1: currentL1,
+          l2: currentL2,
+        );
+      }).toList(),
     );
   }
 
@@ -571,7 +613,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   Widget _card(Product p) {
     final img = p.images.isNotEmpty ? p.images.first : null;
     final price = p.price?["selling"];
-
+    final imageUrl = img != null
+        ? "http://10.0.2.2:8000/image-proxy?url=${Uri.encodeComponent(img)}"
+        : null;
     return Card(
       color: Colors.white,
       elevation: 3,
@@ -585,16 +629,20 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           children: [
 
             // ✅ IMAGE
-            SizedBox(
-              height: 90,
-              width: double.infinity,
-              child: img != null
-                  ? ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(img, fit: BoxFit.contain),
-              )
-                  : const Icon(Icons.image),
-            ),
+        SizedBox(
+        height: 90,
+        width: double.infinity,
+        child: imageUrl != null
+            ? ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            imageUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
+          ),
+        )
+            : const Icon(Icons.image),
+      ),
 
             const SizedBox(height: 6),
 
@@ -716,7 +764,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         "price": {
           "selling": int.tryParse(_price.text) ?? 0,
           "retail": int.tryParse(_retailPrice.text) ?? 0,
-    },
+        },
         "category": {
           "level_1": _l1.text,
           "level_2": _l2.text.isEmpty ? null : _l2.text,
@@ -730,19 +778,26 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       _viewState = AdminViewState.products;
 
       _productFuture =
-          ProductService.getProductsByCategoryName(
-              _currentCategoryName ?? "");
+          ProductService.getProductsByCategoryPath(
+            l1: _selectedL1,
+            l2: _selectedL2,
+            l3: _selectedL3,
+          );
     });
   }
 
   // =============================
   void _delete(String pid) async {
+
     await ProductService.deleteProduct(pid);
 
     setState(() {
       _productFuture =
-          ProductService.getProductsByCategoryName(
-              _currentCategoryName ?? "");
+          ProductService.getProductsByCategoryPath(
+            l1: _selectedL1,
+            l2: _selectedL2,
+            l3: _selectedL3,
+          );
     });
   }
 
