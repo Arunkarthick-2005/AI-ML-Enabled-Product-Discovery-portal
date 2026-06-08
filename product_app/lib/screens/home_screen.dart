@@ -63,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
       String productId, {
         bool fromSearch = false,
         bool fromSimilar = false,
+        bool fromAlternate = false,
       }) {
     setState(() {
       if (_viewState != HomeViewState.detail) {
@@ -84,7 +85,15 @@ class _HomeScreenState extends State<HomeScreen> {
         eventType: "similar_view",
         source: "similar_products",
       );
-    } else {
+    } else if(fromAlternate) {
+      RecommendationService.logInteraction(
+          userId: (widget.userId),
+          productId: productId,
+          eventType: "alternative_view",
+          source: "alternate_products",
+      );
+    }else
+   {
       RecommendationService.logView(
         userId: widget.userId,
         productId: productId,

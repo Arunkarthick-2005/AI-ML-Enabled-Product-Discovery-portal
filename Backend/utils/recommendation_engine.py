@@ -16,7 +16,8 @@ def ensure_utc(ts: datetime) -> datetime:
 
 EVENT_WEIGHTS = {
     "view": 1.0,               # normal product view
-    "search_view": 2.5,        # strong intent
+    "search_view": 3.0,
+    "alternative_view": 2.3,        # strong intent
     "similar_view": 1.8        # Medium signal
 }
 

@@ -11,6 +11,7 @@ class ProductDetailView extends StatefulWidget {
   String productId, {
   bool fromSearch,
   bool fromSimilar,
+      bool fromAlternate,
 }) onOpenProduct;
 
 
@@ -33,6 +34,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
   late Future<Product> _productFuture;
   late Future<List<Product>> _similarFuture;
   late Future<List<Product>> _alternativesFuture;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -43,8 +45,24 @@ class _ProductDetailViewState extends State<ProductDetailView> {
   @override
   void didUpdateWidget(covariant ProductDetailView oldWidget) {
     super.didUpdateWidget(oldWidget);
+
     if (oldWidget.productId != widget.productId) {
+
       _load(widget.productId);
+
+      // ✅ SCROLL TO TOP
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+
+        if (_scrollController.hasClients) {
+          _scrollController.
+          animateTo(
+            0,
+            duration: const Duration(milliseconds: 100),
+            curve: Curves.easeOut,
+          );
+        }
+
+      });
     }
   }
 
@@ -93,6 +111,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
             backgroundColor : Colors.blue,
           ),
           body: SingleChildScrollView(
+            controller: _scrollController,
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,7 +367,7 @@ class _ProductDetailViewState extends State<ProductDetailView> {
         borderRadius: BorderRadius.circular(16),
         onTap: () => widget.onOpenProduct(
           p.pid,
-          fromSimilar: true,
+          fromAlternate: true,
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),
